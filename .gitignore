@@ -3,3 +3,8 @@ __pycache__/
 *.pyo
 *.swp
 .DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
