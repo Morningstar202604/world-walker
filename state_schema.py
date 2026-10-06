@@ -68,9 +68,10 @@ def entity_key(a, b):
     return f"{min(a,b)}:{max(a,b)}"
 
 def get_relation(state, a, b):
-    """安全获取关系，不存在返回默认值"""
+    """安全获取关系，不存在返回默认值（返回副本，避免原地修改污染）"""
     key = entity_key(a, b)
-    return state.get("relations", {}).get(key, {"affinity": 0, "respect": 0})
+    r = state.get("relations", {}).get(key, {"affinity": 0, "respect": 0})
+    return dict(r)
 
 def set_relation(state, a, b, affinity_delta=0, respect_delta=0):
     """更新关系值"""
