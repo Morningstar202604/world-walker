@@ -7,7 +7,7 @@
       影响力原则(Cialdini), 社会网络分析, 责任扩散
 """
 
-import math, random, numpy as np
+import math, random
 from typing import List, Dict, Tuple
 
 # ============================================================

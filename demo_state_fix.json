@@ -1,0 +1,117 @@
+{
+  "tick": 0,
+  "entities": {
+    "player": {
+      "name": "陆恒",
+      "faction": "散修",
+      "attrs": {
+        "str": 12,
+        "dex": 14,
+        "int": 10,
+        "con": 11,
+        "cha": 9
+      },
+      "hp": 80,
+      "hp_max": 80,
+      "mp": 30,
+      "mp_max": 30,
+      "level": "练气三层",
+      "gold": 500,
+      "location": "bamboo_tea_booth"
+    },
+    "old_chen": {
+      "name": "陈老头",
+      "faction": "商人",
+      "attrs": {
+        "str": 6,
+        "dex": 8,
+        "int": 13,
+        "con": 7,
+        "cha": 10
+      },
+      "hp": 13,
+      "hp_max": 40,
+      "mp": 0,
+      "mp_max": 0,
+      "level": "凡人",
+      "gold": 200,
+      "location": "bamboo_tea_booth"
+    },
+    "city_guard": {
+      "name": "巡城甲士",
+      "faction": "官府",
+      "attrs": {
+        "str": 15,
+        "dex": 12,
+        "int": 8,
+        "con": 14,
+        "cha": 7
+      },
+      "hp": 100,
+      "hp_max": 100,
+      "mp": 20,
+      "mp_max": 20,
+      "level": "筑基一层",
+      "gold": 100,
+      "location": "城中"
+    }
+  },
+  "relations": {
+    "old_chen:player": {
+      "affinity": 25.0,
+      "respect": 9.0
+    },
+    "city_guard:player": {
+      "affinity": -5,
+      "respect": 10
+    }
+  },
+  "market": {
+    "bamboo_tea_booth": {
+      "回灵丹": {
+        "price": 50,
+        "supply": 20,
+        "base_price": 50
+      },
+      "粗茶": {
+        "price": 5,
+        "supply": 50,
+        "base_price": 5
+      },
+      "点心": {
+        "price": 8,
+        "supply": 30,
+        "base_price": 8
+      }
+    }
+  },
+  "karma_ledger": [],
+  "world_flags": [],
+  "event_log": [
+    {
+      "tick": 0,
+      "type": "social",
+      "desc": "陈老头对陆恒的亲密5.0"
+    },
+    {
+      "tick": 0,
+      "type": "social",
+      "desc": "陈老头对陆恒的敬重3.0"
+    },
+    {
+      "tick": 0,
+      "type": "social",
+      "desc": "陈老头对陆恒的亲密5.0"
+    },
+    {
+      "tick": 0,
+      "type": "social",
+      "desc": "陈老头对陆恒的敬重3.0"
+    },
+    {
+      "tick": 0,
+      "type": "combat",
+      "desc": "陆恒暴击!陈老头，造成27点伤害 (剩余13/40)"
+    }
+  ]
+}

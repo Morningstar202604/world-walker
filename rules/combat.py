@@ -58,20 +58,23 @@ def resolve_combat(state, attacker_id, defender_id, action="attack", skill=None)
     def_power = def_attrs.get("str", 10) + def_attrs.get("dex", 10) * 0.7
     
     hit_chance = max(0.1, min(0.95, 0.5 + (atk_power - def_power) * 0.05))
-    
+
+    # 重击更难命中 (必须在命中判定前应用)
+    if action == "heavy":
+        hit_chance = max(0.1, hit_chance * 0.7)
+
     if random.random() > hit_chance:
         result["events"].append(f"{atk_ent['name']}的攻击被{def_ent['name']}闪避")
         return result
-    
+
     result["hit"] = True
-    
+
     # 计算伤害
     base_damage = atk_attrs.get("str", 10) * 1.5
-    
+
     # action 加成
     if action == "heavy":
         base_damage *= 1.8
-        hit_chance *= 0.7  # 重击更难命中
     elif action == "flee":
         result["events"].append(f"{atk_ent['name']}尝试逃跑")
         flee_chance = atk_attrs.get("dex", 10) / (atk_attrs.get("dex", 10) + def_attrs.get("dex", 10))

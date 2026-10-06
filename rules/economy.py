@@ -57,6 +57,10 @@ def resolve_trade(state, location_id, item, quantity, is_buyer, entity_id):
         "events": []
     }
     
+    if quantity <= 0:
+        result["events"].append("交易数量必须为正")
+        return result
+
     if not loc_market or item not in loc_market:
         result["events"].append(f"此地没有{item}")
         return result

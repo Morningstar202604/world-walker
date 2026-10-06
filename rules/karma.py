@@ -77,12 +77,16 @@ def resolve_karma(state, actor_id, victim_id=None, action_type="normal"):
     total = get_unsettled_karma(state, actor_id)
     result["total_unsettled"] = total
     
-    # 业力等级
-    if total >= 200:
+    # 业力等级 (与 consequence 阈值统一)
+    #   extreme/catastrophe:  >= 300 (天劫/大清算)
+    #   high/strong_pressure: >= 150 (沉重压力)
+    #   moderate/mild_pressure: >= 60 (隐约负担)
+    #   low/none:             <  60
+    if total >= 300:
         result["risk_level"] = "extreme"
-    elif total >= 100:
+    elif total >= 150:
         result["risk_level"] = "high"
-    elif total >= 40:
+    elif total >= 60:
         result["risk_level"] = "moderate"
     else:
         result["risk_level"] = "low"

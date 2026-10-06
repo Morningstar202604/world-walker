@@ -71,15 +71,18 @@ def multilevel_selection(group_means: List[float], group_fitnesses: List[float],
                          within_group_vars: List[float]) -> Tuple[float, float]:
     """多层选择分解: (群体间选择量, 群体内选择量)"""
     total_n = sum(group_sizes)
+    if total_n <= 0:
+        return 0.0, 0.0
     mean_fitness = sum(w * n for w, n in zip(group_fitnesses, group_sizes)) / total_n
     mean_trait = sum(z * n for z, n in zip(group_means, group_sizes)) / total_n
     
-    # 群体间
-    between = sum(n * (w / mean_fitness - 1) * (z - mean_trait)
+    # 群体间 (防止 mean_fitness=0 除零)
+    safe_mf = mean_fitness if abs(mean_fitness) > 1e-12 else 1e-12
+    between = sum(n * (w / safe_mf - 1) * (z - mean_trait)
                   for n, w, z in zip(group_sizes, group_fitnesses, group_means))
     
     # 群体内 (用方差近似)
-    within = sum(var * n for var, n in zip(within_group_vars, group_sizes)) / max(1, total_n)
+    within = sum(var * n for var, n in zip(within_group_vars, group_sizes)) / total_n
     
     return between, within
 
@@ -261,14 +264,17 @@ def memory_retrieval_score(recency: float, importance: float, relevance: float,
 # ============================================================
 
 class PIDController:
-    def __init__(self, Kp: float, Ki: float, Kd: float):
+    def __init__(self, Kp: float, Ki: float, Kd: float, integral_limit: float = 100.0):
         self.Kp, self.Ki, self.Kd = Kp, Ki, Kd
+        self.integral_limit = integral_limit
         self.integral = 0.0
         self.prev_error = 0.0
     
     def step(self, setpoint: float, measured: float, dt: float = 1.0) -> Dict:
         error = setpoint - measured
         self.integral += error * dt
+        # 积分限幅 (anti-windup)
+        self.integral = max(-self.integral_limit, min(self.integral_limit, self.integral))
         derivative = (error - self.prev_error) / max(dt, 0.001)
         output = self.Kp * error + self.Ki * self.integral + self.Kd * derivative
         self.prev_error = error

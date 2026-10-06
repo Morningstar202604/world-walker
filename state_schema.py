@@ -73,15 +73,19 @@ def get_relation(state, a, b):
     r = state.get("relations", {}).get(key, {"affinity": 0, "respect": 0})
     return dict(r)
 
+def _clamp(value, lo=-100, hi=100):
+    """将值限制在 [lo, hi] 范围内"""
+    return max(lo, min(hi, value))
+
 def set_relation(state, a, b, affinity_delta=0, respect_delta=0):
-    """更新关系值"""
+    """更新关系值 (affinity/respect clamp 到 -100~100)"""
     key = entity_key(a, b)
     if "relations" not in state:
         state["relations"] = {}
     if key not in state["relations"]:
         state["relations"][key] = {"affinity": 0, "respect": 0}
-    state["relations"][key]["affinity"] += affinity_delta
-    state["relations"][key]["respect"] += respect_delta
+    state["relations"][key]["affinity"] = _clamp(state["relations"][key]["affinity"] + affinity_delta)
+    state["relations"][key]["respect"] = _clamp(state["relations"][key]["respect"] + respect_delta)
 
 def add_karma(state, debtor, creditor, ktype, amount):
     """添加因果债记录"""

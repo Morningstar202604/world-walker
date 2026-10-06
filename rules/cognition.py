@@ -95,8 +95,9 @@ def conflict_resolution_prob(utilities: List[float], temperature: float = 1.0) -
     """P(rule_i) = e^(u_i/τ) / Σ_j e^(u_j/τ) -- Softmax 规则选择"""
     if not utilities:
         return []
+    tau = max(temperature, 1e-6)  # 防止除零
     max_u = max(utilities)
-    exp_u = [math.exp((u - max_u) / temperature) for u in utilities]
+    exp_u = [math.exp((u - max_u) / tau) for u in utilities]
     total = sum(exp_u)
     return [e / total for e in exp_u]
 
@@ -127,11 +128,12 @@ def true_comprehension(theoretical_knowledge: float, embodied_practice: float) -
 def satisficing_choice(options: List[Any], eval_func: Callable, aspiration: float,
                        max_explore: int = 100) -> Dict:
     """Simon 满意化：找到够好的就停"""
-    random.shuffle(options)
+    opts = list(options)  # 复制，避免修改调用方数据
+    random.shuffle(opts)
     explored = 0
     best_seen = None
     best_val = -float('inf')
-    for opt in options[:max_explore]:
+    for opt in opts[:max_explore]:
         val = eval_func(opt)
         explored += 1
         if val >= aspiration:

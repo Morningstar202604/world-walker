@@ -93,7 +93,7 @@ def check_world_emergent_events(state: Dict) -> List[Dict]:
     # 业债爆发
     karma = state.get("karma_ledger", [])
     total = sum(e.get("amount", 0) for e in karma if not e.get("settled"))
-    if total > 200:
+    if total >= 300:  # 与 karma.py 的 extreme/catastrophe 阈值一致
         events.append({
             "type": "karma_collapse",
             "desc": "因果大清算即将降临...",

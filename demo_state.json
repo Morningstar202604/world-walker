@@ -1,5 +1,5 @@
 {
-  "tick": 1,
+  "tick": 2,
   "entities": {
     "player": {
       "name": "陆恒",
@@ -17,7 +17,7 @@
       "mp_max": 40,
       "level": "练气三层",
       "level_num": 3,
-      "gold": 398,
+      "gold": 296,
       "location": "bamboo_tea_booth"
     },
     "old_chen": {
@@ -57,8 +57,8 @@
   },
   "relations": {
     "old_chen:player": {
-      "affinity": 10,
-      "respect": 0
+      "affinity": 65.0,
+      "respect": 33.0
     },
     "city_guard:player": {
       "affinity": -10.0,
@@ -69,7 +69,7 @@
     "bamboo_tea_booth": {
       "回灵丹": {
         "price": 50,
-        "supply": 19,
+        "supply": 18,
         "base_price": 50
       }
     }
@@ -115,6 +115,141 @@
       "tick": 1,
       "type": "tick",
       "desc": "回合1结束"
+    },
+    {
+      "tick": 1,
+      "type": "combat",
+      "desc": "陆恒的攻击被巡城甲士闪避"
+    },
+    {
+      "tick": 1,
+      "type": "trade",
+      "desc": "交易数量必须为正"
+    },
+    {
+      "tick": 1,
+      "type": "combat",
+      "desc": "陆恒的攻击被巡城甲士闪避"
+    },
+    {
+      "tick": 1,
+      "type": "trade",
+      "desc": "陆恒购买回灵丹×2，花费102灵石"
+    },
+    {
+      "tick": 1,
+      "type": "social",
+      "desc": "陈老头对陆恒的亲密5.0"
+    },
+    {
+      "tick": 1,
+      "type": "social",
+      "desc": "陈老头对陆恒的敬重3.0"
+    },
+    {
+      "tick": 2,
+      "type": "tick",
+      "desc": "回合2结束"
+    },
+    {
+      "tick": 2,
+      "type": "social",
+      "desc": "陈老头对陆恒的亲密5.0"
+    },
+    {
+      "tick": 2,
+      "type": "social",
+      "desc": "陈老头对陆恒的敬重3.0"
+    },
+    {
+      "tick": 2,
+      "type": "social",
+      "desc": "陈老头对陆恒的亲密5.0"
+    },
+    {
+      "tick": 2,
+      "type": "social",
+      "desc": "陈老头对陆恒的敬重3.0"
+    },
+    {
+      "tick": 2,
+      "type": "social",
+      "desc": "陈老头对陆恒的亲密5.0"
+    },
+    {
+      "tick": 2,
+      "type": "social",
+      "desc": "陈老头对陆恒的敬重3.0"
+    },
+    {
+      "tick": 2,
+      "type": "social",
+      "desc": "陈老头对陆恒的亲密5.0"
+    },
+    {
+      "tick": 2,
+      "type": "social",
+      "desc": "陈老头对陆恒的敬重3.0"
+    },
+    {
+      "tick": 2,
+      "type": "social",
+      "desc": "陈老头对陆恒的亲密5.0"
+    },
+    {
+      "tick": 2,
+      "type": "social",
+      "desc": "陈老头对陆恒的敬重3.0"
+    },
+    {
+      "tick": 2,
+      "type": "social",
+      "desc": "陈老头对陆恒的亲密5.0"
+    },
+    {
+      "tick": 2,
+      "type": "social",
+      "desc": "陈老头对陆恒的敬重3.0"
+    },
+    {
+      "tick": 2,
+      "type": "social",
+      "desc": "陈老头对陆恒的亲密5.0"
+    },
+    {
+      "tick": 2,
+      "type": "social",
+      "desc": "陈老头对陆恒的敬重3.0"
+    },
+    {
+      "tick": 2,
+      "type": "social",
+      "desc": "陈老头对陆恒的亲密5.0"
+    },
+    {
+      "tick": 2,
+      "type": "social",
+      "desc": "陈老头对陆恒的敬重3.0"
+    },
+    {
+      "tick": 2,
+      "type": "social",
+      "desc": "陈老头对陆恒的亲密5.0"
+    },
+    {
+      "tick": 2,
+      "type": "social",
+      "desc": "陈老头对陆恒的敬重3.0"
+    },
+    {
+      "tick": 2,
+      "type": "social",
+      "desc": "陈老头对陆恒的亲密5.0"
+    },
+    {
+      "tick": 2,
+      "type": "social",
+      "desc": "陈老头对陆恒的敬重3.0"
     }
   ]
 }
