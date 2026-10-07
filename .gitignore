@@ -8,3 +8,7 @@ __pycache__/
 __pycache__/
 *.py[cod]
 *.egg-info/
+
+# Runtime state (_player save files_)
+game_state.json
+*.save.json
