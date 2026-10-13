@@ -2,6 +2,12 @@
 
 > 核心原则:**所有确定性计算交给引擎,Agent 只负责文学叙事**。
 
+> **MCP 模式**：宿主是 MCP 客户端（Claude Code / Codex / Cursor 等）时，用 `mcp_server.py`
+> 暴露的 13 个工具，语义与本文命令一一对应：`cognition`/`flow`/`identity`/`panarchy`/
+> `moral_update` 合并为 `status`，`info_weight` 改名为 `narrative_weight`，`world_state`
+> 改名为 `read_state`；另增建局三件套 `world_schema` / `world_init` / `world_open`。
+> 安装 `pip install -e ".[mcp]"` 后，客户端命令填 `world-walker-mcp`。
+
 ---
 
 ## 1. 引擎命令总览

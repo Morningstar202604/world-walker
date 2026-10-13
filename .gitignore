@@ -11,4 +11,5 @@ __pycache__/
 
 # Runtime state (_player save files_)
 game_state.json
+ww_state.json
 *.save.json

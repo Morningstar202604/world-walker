@@ -12,25 +12,53 @@ Keywords: `AI text adventure` `interactive fiction engine` `emergent narrative` 
 
 ## Quick Start
 
-```bash
-# List commands
-PYTHONPATH=. python3 engine.py --help
+### Option A: MCP (recommended — for any AI agent)
 
-# 14 commands at a glance
-PYTHONPATH=. python3 engine.py combat    --state game.json --attacker player --defender goblin
-PYTHONPATH=. python3 engine.py trade     --state game.json --location market --item potion --quantity 3 --direction buy --entity player
-PYTHONPATH=. python3 engine.py social    --state game.json --actor player --target npc --event help
-PYTHONPATH=. python3 engine.py karma     --state game.json --actor player --karma_type murder_innocent
-PYTHONPATH=. python3 engine.py tick      --state game.json
-PYTHONPATH=. python3 engine.py flow      --state game.json
-PYTHONPATH=. python3 engine.py identity  --state game.json
-PYTHONPATH=. python3 engine.py narrative --state game.json
-PYTHONPATH=. python3 engine.py world_state  --state game.json
-PYTHONPATH=. python3 engine.py panarchy  --state game.json
-PYTHONPATH=. python3 engine.py moral_update   --state game.json
-PYTHONPATH=. python3 engine.py cognition   --state game.json --entity player
-PYTHONPATH=. python3 engine.py merit     --state game.json --aid 0.8 --sincerity 0.9
-PYTHONPATH=. python3 engine.py info_weight --state game.json --probability 0.05
+```bash
+pip install -e ".[mcp]"
+```
+
+Add to your MCP client (Claude Code / Codex / Cursor / any MCP-capable agent):
+
+```json
+{ "mcpServers": { "world-walker": { "command": "world-walker-mcp" } } }
+```
+
+Then hand your setting bible to the agent: "start a game from my setting". The loop is:
+`world_schema` (learn the state shape) → `world_init` (build the world from the setting, with a seed) →
+each player action is settled by `combat` / `trade` / `social` / `karma` → `tick` closes the turn →
+every 3-5 turns call `narrative` + `status` for emergent events and flow state. The agent only turns
+the engine's JSON into prose — it must never invent numbers.
+
+- End-to-end self-check: `python scripts/verify_mcp_stdio.py` (22 assertions, including
+  "same seed + same action → identical result")
+- Reproducible: pass `seed` at world_init; every settlement seeds its RNG from the state's
+  `rng_seed` + `rng_counter`, both persisted with the state.
+
+### Option B: CLI (manual settlement)
+
+```bash
+python init_game.py                                      # writes the sample world game_state.json
+python engine.py world_state --state game_state.json      # `python` on Windows, `python3` on macOS/Linux
+```
+
+14 commands at a glance (using `game_state.json`; note `--item` takes the market item_key, not the display name):
+
+```bash
+python engine.py combat    --state game_state.json --attacker player --defender goblin --action_type heavy
+python engine.py trade     --state game_state.json --location bamboo_tea_booth --item an_zhen_san --quantity 3 --direction buy --entity player
+python engine.py social    --state game_state.json --actor player --target old_chen --event help
+python engine.py karma     --state game_state.json --actor player --karma_type murder_innocent
+python engine.py tick      --state game_state.json
+python engine.py flow      --state game_state.json
+python engine.py identity  --state game_state.json
+python engine.py narrative --state game_state.json
+python engine.py world_state  --state game_state.json
+python engine.py panarchy  --state game_state.json
+python engine.py moral_update   --state game_state.json
+python engine.py cognition   --state game_state.json --entity player
+python engine.py merit     --state game_state.json --aid 0.8 --sincerity 0.9
+python engine.py info_weight --state game_state.json --probability 0.05
 ```
 
 ---
@@ -38,9 +66,13 @@ PYTHONPATH=. python3 engine.py info_weight --state game.json --probability 0.05
 ## Project Structure
 
 ```
-game_engine/
+game_engine/                      # the repo root IS the game_engine package (any folder name works)
 ├── engine.py                     # CLI entry (14 commands)
+├── mcp_server.py                 # MCP server (13 tools; only extra dep is mcp>=2)
 ├── state_schema.py               # State schema + helpers
+├── init_game.py                  # Writes the sample world (青云界)
+├── pyproject.toml                # pip install -e ".[mcp]"; commands world-walker / world-walker-mcp
+├── scripts/verify_mcp_stdio.py   # MCP end-to-end self-check (22 assertions)
 ├── demo_state.json               # Demo game state
 ├── GAME_MASTER_PROTOCOL.md       # AI Agent call protocol
 └── rules/                        # 85+ academic formulas as Python

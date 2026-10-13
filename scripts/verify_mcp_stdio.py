@@ -1,0 +1,241 @@
+#!/usr/bin/env python3
+"""
+MCP 服务器端到端验证 (verify_mcp_stdio.py)
+
+起一个真实的 stdio MCP 服务进程，按「设定 → 建世界 → 打一局」的完整流程调用全部工具，
+并验证两件关键性质：
+  1. 所有数值结算都由引擎完成、状态落盘可续跑（Agent 无法绕过引擎）
+  2. 同种子 + 同行动序列 → 结果完全一致（可复现）
+
+用法:  python scripts/verify_mcp_stdio.py
+退出码: 0 = 全绿；1 = 有失败项；2 = 缺少 mcp SDK
+"""
+
+import asyncio
+import json
+import os
+import subprocess
+import sys
+import tempfile
+
+try:
+    from mcp import ClientSession
+    from mcp.client.stdio import StdioServerParameters, stdio_client
+except ImportError:
+    print('缺少 mcp SDK。请先安装: pip install -e ".[mcp]"')
+    sys.exit(2)
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SERVER = os.path.join(ROOT, 'mcp_server.py')
+
+EXPECTED_TOOLS = {
+    'world_schema', 'world_init', 'world_open', 'read_state', 'combat', 'trade',
+    'social', 'karma', 'tick', 'narrative', 'status', 'merit', 'narrative_weight',
+}
+
+RESULTS = []
+
+
+def check(name, ok, note=''):
+    RESULTS.append(bool(ok))
+    print('%s  %-46s %s' % ('PASS' if ok else 'FAIL', name, note))
+
+
+def data(result):
+    """兼容 structured 与文本两种返回形态，取出工具返回的 payload。"""
+    for attr in ('structuredContent', 'structured_content'):
+        sc = getattr(result, attr, None)
+        if isinstance(sc, dict):
+            return sc.get('result', sc) if set(sc) == {'result'} else sc
+    for c in getattr(result, 'content', None) or []:
+        if getattr(c, 'type', '') == 'text':
+            try:
+                return json.loads(c.text)
+            except Exception:
+                return c.text
+    return None
+
+
+def is_err(result):
+    return bool(getattr(result, 'isError', False) or getattr(result, 'is_error', False))
+
+
+# 一局武侠小世界的「设定」，作为 world_init 的入参
+SETTING = {
+    'world': {'name': '测试江湖', 'era': '江湖历元年',
+              'location_desc': '临江茶棚，竹帘低垂，江水声隐约可闻。'},
+    'player': {'name': '试剑人', 'faction': '散人',
+               'attrs': {'str': 14, 'dex': 12, 'int': 11, 'con': 10, 'cha': 9},
+               'level': '三流', 'hp': 60, 'hp_max': 60, 'mp': 10, 'mp_max': 10,
+               'gold': 200, 'location': '临江茶棚'},
+    'entities': [
+        {'id': 'scout', 'name': '黑衣探子', 'faction': '不明',
+         'attrs': {'str': 10, 'dex': 11, 'int': 9, 'con': 8, 'cha': 6},
+         'level': '凡人', 'hp': 40, 'hp_max': 40, 'gold': 30, 'location': '临江茶棚'},
+        {'id': 'vendor', 'name': '茶棚老板', 'faction': '市井',
+         'attrs': {'str': 7, 'dex': 8, 'int': 12, 'con': 9, 'cha': 13},
+         'level': '凡人', 'hp': 35, 'hp_max': 35, 'gold': 150, 'location': '临江茶棚'},
+    ],
+    'market': [{'location': '临江茶棚', 'items': [
+        {'key': 'chun_cha', 'name': '春茶', 'price': 30, 'supply': 20, 'base_price': 30,
+         'type': '饮品', 'desc': '解渴'},
+        {'key': 'jinchuang_yao', 'name': '金疮药', 'price': 50, 'supply': 10, 'base_price': 50,
+         'type': '药品', 'desc': '外伤用药'},
+    ]}],
+    'relations': [{'a': 'player', 'b': 'vendor', 'affinity': 5, 'respect': 2}],
+    'world_flags': ['jianghu'],
+}
+
+
+async def scenario(session, state_path, seed):
+    """标准剧本：建世界 → 战斗/交易/社交/因果 → 回合。返回关键结果。"""
+    init = data(await session.call_tool('world_init', dict(SETTING, state_path=state_path, seed=seed)))
+    combat = data(await session.call_tool('combat', {'attacker': 'player', 'defender': 'scout',
+                                                     'action_type': 'heavy'}))
+    trade = data(await session.call_tool('trade', {'location': '临江茶棚', 'item': 'jinchuang_yao',
+                                                   'direction': 'buy', 'quantity': 2}))
+    social = data(await session.call_tool('social', {'actor': 'player', 'target': 'vendor',
+                                                     'event': 'gift'}))
+    karma = data(await session.call_tool('karma', {'actor': 'player', 'karma_type': 'theft',
+                                                   'victim': 'vendor'}))
+    tick = data(await session.call_tool('tick', {}))
+    return {'init': init, 'combat': combat, 'trade': trade, 'social': social,
+            'karma': karma, 'tick': tick}
+
+
+async def main():
+    tmp = tempfile.mkdtemp(prefix='ww-verify-')
+    state_a = os.path.join(tmp, 'a.save.json')
+    state_b = os.path.join(tmp, 'b.save.json')
+
+    params = StdioServerParameters(command=sys.executable, args=[SERVER], cwd=ROOT)
+    async with stdio_client(params) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+
+            # 1. 工具清单
+            tools = await session.list_tools()
+            names = {t.name for t in tools.tools}
+            check('tools/list 覆盖全部 13 个工具', names == EXPECTED_TOOLS,
+                  '缺少: %s' % (EXPECTED_TOOLS - names) if names != EXPECTED_TOOLS else '')
+            check('每个工具都有描述', all((t.description or '').strip() for t in tools.tools))
+
+            # 2. 未开局时的守卫
+            r = await session.call_tool('tick', {})
+            check('未 world_init 就结算会报错（不许绕过引擎）', is_err(r), 'isError=True' if is_err(r) else data(r))
+
+            # 3. world_schema
+            schema = data(await session.call_tool('world_schema', {}))
+            check('world_schema 返回状态结构说明',
+                  isinstance(schema, dict) and 'entity_shape' in schema and 'action_tools' in schema)
+
+            # 4. 完整剧本（A 局）
+            out = await scenario(session, state_a, seed=42)
+            check('world_init 建世界成功', isinstance(out['init'], dict) and out['init'].get('entities') == 3,
+                  str(out['init'])[:80])
+            check('状态文件已落盘（utf-8 JSON）', os.path.exists(state_a))
+            with open(state_a, encoding='utf-8') as f:
+                disk = json.load(f)
+            check('关系键按字母序生成', 'player:vendor' in disk['relations'])
+            check('rng_seed 已写入状态', disk.get('rng_seed') == 42 and disk.get('rng_counter', 0) >= 1)
+
+            # 5. 战斗结算：找一个必然命中的种子，验证伤害真的落到状态里
+            hit_seed, hit_path, hit_res = None, None, None
+            for s in range(1, 20):
+                p = os.path.join(tmp, 'seed%d.save.json' % s)
+                await session.call_tool('world_init', dict(SETTING, state_path=p, seed=s))
+                cr = data(await session.call_tool('combat', {'attacker': 'player', 'defender': 'scout',
+                                                             'action_type': 'attack'}))
+                if cr.get('hit'):
+                    hit_seed, hit_path, hit_res = s, p, cr
+                    break
+            check('战斗能命中（20 个种子内至少一次）', hit_seed is not None,
+                  'seed=%s damage=%s' % (hit_seed, hit_res.get('damage') if hit_seed else '-'))
+            if hit_seed is not None:
+                await session.call_tool('world_open', {'state_path': hit_path})
+                live = data(await session.call_tool('read_state', {}))
+                check('命中伤害写入状态（read_state 与结算一致）',
+                      hit_res['damage'] > 0 and hit_res['defender_hp_after'] < 40
+                      and live['entities']['scout']['hp'] == hit_res['defender_hp_after'],
+                      'damage=%s hp=%s' % (hit_res['damage'], live['entities']['scout']['hp']))
+            # 回到 A 局继续后面的检查
+            await session.call_tool('world_open', {'state_path': state_a})
+            live = data(await session.call_tool('read_state', {}))
+
+            # 6. 交易
+            check('trade 扣款并减库存',
+                  out['trade'].get('success') and live['entities']['player']['gold'] == 200 - out['trade']['total_cost'],
+                  'cost=%s gold=%s' % (out['trade'].get('total_cost'), live['entities']['player']['gold']))
+            bad = data(await session.call_tool('trade', {'location': '临江茶棚', 'item': '不存在的货',
+                                                         'direction': 'buy'}))
+            check('trade 错误商品返回 success=false 而非崩溃', bad.get('success') is False)
+
+            # 7. 社交 → 关系变化
+            check('social 提升亲密度（gift +8）',
+                  out['social']['affinity_after'] == out['social']['affinity_before'] + 8,
+                  '%s -> %s' % (out['social']['affinity_before'], out['social']['affinity_after']))
+
+            # 8. 因果债
+            live = data(await session.call_tool('read_state', {}))
+            ledger = live.get('karma_ledger', [])
+            check('karma 记入账本（theft +15）',
+                  len(ledger) == 1 and ledger[0]['amount'] == 15 and ledger[0]['from'] == 'player',
+                  str(ledger[:1]))
+
+            # 9. 回合
+            check('tick 推进回合', out['tick'].get('_tick') == 1)
+
+            # 10. 涌现叙事 / 状态聚合
+            nar = data(await session.call_tool('narrative', {}))
+            check('narrative 返回涌现事件与相位',
+                  isinstance(nar, dict) and 'emergent_events' in nar and 'panarchy_phase' in nar)
+            st = data(await session.call_tool('status', {}))
+            check('status 聚合心流/身份/道德/认知',
+                  isinstance(st, dict) and {'flow', 'identity', 'moral_vector', 'cognition'} <= set(st))
+
+            # 11. 纯函数
+            merit = data(await session.call_tool('merit', {'aid': 0.9, 'sincerity': 1.0}))
+            weight = data(await session.call_tool('narrative_weight', {'probability': 0.01}))
+            check('merit / narrative_weight 纯函数可用',
+                  isinstance(merit, dict) and merit.get('merit_value') is not None
+                  and weight.get('info_weight', 0) > 0,
+                  'merit=%s info=%s' % (merit.get('merit_value'), round(weight.get('info_weight', 0), 2)))
+
+            # 12. world_open 续跑
+            reopened = data(await session.call_tool('world_open', {'state_path': state_a}))
+            check('world_open 可续跑已存对局', reopened.get('tick') == 1 and 'scout' in reopened.get('entities', []))
+
+            # 13. 确定性：同种子 + 同行动 → 完全一致；不同种子 → 结果有差异
+            det_a, det_b = os.path.join(tmp, 'det_a.save.json'), os.path.join(tmp, 'det_b.save.json')
+            await session.call_tool('world_init', dict(SETTING, state_path=det_a, seed=hit_seed or 1))
+            r1 = data(await session.call_tool('combat', {'attacker': 'player', 'defender': 'scout',
+                                                         'action_type': 'attack'}))
+            await session.call_tool('world_init', dict(SETTING, state_path=det_b, seed=hit_seed or 1))
+            r2 = data(await session.call_tool('combat', {'attacker': 'player', 'defender': 'scout',
+                                                         'action_type': 'attack'}))
+            check('确定性：同种子同行动结果完全一致', r1 == r2 and r1.get('hit'),
+                  'damage=%s' % r1.get('damage'))
+            outs = set()
+            for s in range(1, 9):
+                p = os.path.join(tmp, 'rand%d.save.json' % s)
+                await session.call_tool('world_init', dict(SETTING, state_path=p, seed=s))
+                cr = data(await session.call_tool('combat', {'attacker': 'player', 'defender': 'scout',
+                                                             'action_type': 'attack'}))
+                outs.add((cr.get('hit'), cr.get('damage'), cr.get('crit')))
+            check('不同种子给出不同战斗结果（随机数确实生效）', len(outs) >= 2, '%d 种结果' % len(outs))
+
+    # 14. CLI 冒烟（验证导入别名让任意目录名都能跑）
+    cli = subprocess.run([sys.executable, os.path.join(ROOT, 'engine.py'),
+                          'world_state', '--state', state_a],
+                         capture_output=True, text=True, encoding='utf-8', cwd=tempfile.gettempdir())
+    ok_cli = cli.returncode == 0 and '"tick"' in (cli.stdout or '')
+    check('CLI 从任意工作目录可运行（导入别名生效）', ok_cli,
+          (cli.stdout or cli.stderr or '').strip().splitlines()[:1][0] if not ok_cli else '')
+
+    passed = sum(RESULTS)
+    print('\n%d/%d passed' % (passed, len(RESULTS)))
+    return 0 if passed == len(RESULTS) else 1
+
+
+if __name__ == '__main__':
+    sys.exit(asyncio.run(main()))

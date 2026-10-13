@@ -12,25 +12,50 @@
 
 ## 快速开始
 
-```bash
-# 查看命令列表
-PYTHONPATH=. python3 engine.py --help
+### 方式 A：MCP（推荐 —— 给任何 AI Agent 用）
 
-# 14 条命令速查
-PYTHONPATH=. python3 engine.py combat    --state game.json --attacker player --defender goblin
-PYTHONPATH=. python3 engine.py trade     --state game.json --location market --item 丹药 --quantity 3 --direction buy --entity player
-PYTHONPATH=. python3 engine.py social    --state game.json --actor player --target npc --event help
-PYTHONPATH=. python3 engine.py karma     --state game.json --actor player --karma_type murder_innocent
-PYTHONPATH=. python3 engine.py tick      --state game.json
-PYTHONPATH=. python3 engine.py flow      --state game.json
-PYTHONPATH=. python3 engine.py identity  --state game.json
-PYTHONPATH=. python3 engine.py narrative --state game.json
-PYTHONPATH=. python3 engine.py world_state  --state game.json
-PYTHONPATH=. python3 engine.py panarchy  --state game.json
-PYTHONPATH=. python3 engine.py moral_update   --state game.json
-PYTHONPATH=. python3 engine.py cognition   --state game.json --entity player
-PYTHONPATH=. python3 engine.py merit     --state game.json --aid 0.8 --sincerity 0.9
-PYTHONPATH=. python3 engine.py info_weight --state game.json --probability 0.05
+```bash
+pip install -e ".[mcp]"
+```
+
+在 MCP 客户端（Claude Code / Codex / Cursor / 任意支持 MCP 的 Agent）配置里加：
+
+```json
+{ "mcpServers": { "world-walker": { "command": "world-walker-mcp" } } }
+```
+
+然后把设定丢给 Agent：「照我的设定开一局」。流程是：`world_schema`（了解状态结构）→
+`world_init`（按设定建世界，含 seed）→ 玩家每个行动由 `combat` / `trade` / `social` / `karma`
+结算 → `tick` 收回合 → 每 3-5 回合用 `narrative` + `status` 检查涌现事件与心流；
+Agent 只负责把引擎返回的 JSON 转写成文学描写，不得编造数值。
+
+- 端到端自检：`python scripts/verify_mcp_stdio.py`（22 项断言，含「同种子 + 同行动 → 结果一致」）
+- 可复现：开局带 `seed`；每次结算的随机数由状态里的 `rng_seed` 与 `rng_counter` 共同决定，并随状态落盘
+
+### 方式 B：CLI（手动结算）
+
+```bash
+python init_game.py                                      # 生成示例世界 game_state.json（青云界）
+python engine.py world_state --state game_state.json      # Windows 用 python，macOS/Linux 用 python3
+```
+
+14 条命令速查（状态文件以 `game_state.json` 为例；注意 `--item` 传的是市场 item_key，不是显示名）：
+
+```bash
+python engine.py combat    --state game_state.json --attacker player --defender goblin --action_type heavy
+python engine.py trade     --state game_state.json --location bamboo_tea_booth --item an_zhen_san --quantity 3 --direction buy --entity player
+python engine.py social    --state game_state.json --actor player --target old_chen --event help
+python engine.py karma     --state game_state.json --actor player --karma_type murder_innocent
+python engine.py tick      --state game_state.json
+python engine.py flow      --state game_state.json
+python engine.py identity  --state game_state.json
+python engine.py narrative --state game_state.json
+python engine.py world_state  --state game_state.json
+python engine.py panarchy  --state game_state.json
+python engine.py moral_update   --state game_state.json
+python engine.py cognition   --state game_state.json --entity player
+python engine.py merit     --state game_state.json --aid 0.8 --sincerity 0.9
+python engine.py info_weight --state game_state.json --probability 0.05
 ```
 
 ---
@@ -38,9 +63,13 @@ PYTHONPATH=. python3 engine.py info_weight --state game.json --probability 0.05
 ## 项目结构
 
 ```
-game_engine/
+game_engine/                      # 仓库根即 game_engine 包（导入别名已放开，目录名任意）
 ├── engine.py                     # CLI 入口（14 条命令）
+├── mcp_server.py                 # MCP 服务器（13 个工具；除 mcp>=2 外无额外依赖）
 ├── state_schema.py               # 状态结构 + 辅助函数
+├── init_game.py                  # 生成示例世界（青云界）
+├── pyproject.toml                # pip install -e ".[mcp]"；命令 world-walker / world-walker-mcp
+├── scripts/verify_mcp_stdio.py   # MCP 端到端自检（22 项断言）
 ├── demo_state.json               # 演示状态
 ├── GAME_MASTER_PROTOCOL.md       # AI Agent 调用协议
 └── rules/                        # 85+ 学术公式（Python 实现）
