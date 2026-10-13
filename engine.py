@@ -9,6 +9,17 @@ _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 _PARENT_DIR = os.path.dirname(_SCRIPT_DIR)
 sys.path.insert(0, _PARENT_DIR)
 
+# 引擎内部统一用 `import game_engine.*`，过去要求仓库目录名必须叫 game_engine。
+# 这里注册包别名，使任意克隆目录名 / pip 安装方式都能导入。
+if "game_engine" not in sys.modules:
+    import importlib.util
+    _spec = importlib.util.spec_from_file_location(
+        "game_engine", os.path.join(_SCRIPT_DIR, "__init__.py"),
+        submodule_search_locations=[_SCRIPT_DIR])
+    _pkg = importlib.util.module_from_spec(_spec)
+    _pkg.__path__ = [_SCRIPT_DIR]
+    sys.modules["game_engine"] = _pkg
+
 from game_engine.state_schema import load_state, save_state, log_event
 from game_engine.rules.combat import resolve_combat
 from game_engine.rules.economy import resolve_trade, tick_market

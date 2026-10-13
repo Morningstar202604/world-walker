@@ -79,8 +79,9 @@ state = {
     },
     "karma_ledger": [],
     "world_flags": ["peaceful", "mortal_realm"],
+    "rng_seed": 20261014,
     "event_log": [
-        {"tick": 0, "type": "system", "msg": "陆恒睁开眼睛，发现自己身处竹隐茶棚之中..."}
+        {"tick": 0, "type": "system", "desc": "陆恒睁开眼睛，发现自己身处竹隐茶棚之中..."}
     ],
     "world_info": {
         "name": "青云界",
@@ -89,7 +90,7 @@ state = {
     }
 }
 
-json.dump(state, open(STATE_FILE, "w"), ensure_ascii=False, indent=2)
+json.dump(state, open(STATE_FILE, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
 print(f"Game state saved to {STATE_FILE}")
 print(f"Entities: {len(state['entities'])}")
 print(f"Market locations: {len(state['market'])}")
