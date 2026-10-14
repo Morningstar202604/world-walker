@@ -33,6 +33,7 @@ EXPECTED_TOOLS = {
     'social', 'karma', 'tick', 'narrative', 'status', 'merit', 'narrative_weight',
     'narration_context', 'character_card_read', 'add_character', 'import_lorebook',
     'snapshot', 'restore', 'travel', 'open_panel', 'load_setting',
+    'advance', 'recall', 'write_summary', 'recap', 'configure',
 }
 
 RESULTS = []
@@ -338,8 +339,8 @@ async def main():
                                                      'seed': 5})
             st = data(await session.call_tool('read_state', {}))
             check('设定包一键开局：世界/人物/世界书全部落地',
-                  st['world_info']['name'] == '玄枢界' and len(st['entities']) == 6
-                  and len(st.get('lore', [])) == 16,
+                  st['world_info']['name'] == '玄枢界' and len(st['entities']) == 9
+                  and len(st.get('lore', [])) == 21,
                   '%s · 实体 %d · 词条 %d' % (st['world_info']['name'], len(st['entities']),
                                              len(st.get('lore', []))))
             nc = data(await session.call_tool('narration_context',
@@ -348,6 +349,35 @@ async def main():
             check('设定包世界书按关键词触发（含常驻基调与事件范式）',
                   '基调' in blob and '枢台' in blob and '事件范式 · 入学试炼与大比' in blob,
                   '触发 %d 条' % len(nc['triggered_lore']))
+
+            # 18. 长局：归档/召回/摘要/回顾/突破/配置
+            await session.call_tool('configure', {'event_log_keep': 5})
+            for i in range(9):   # 用 travel 造事件（一定成功），验证溢出归档
+                await session.call_tool('travel', {'location': '听霄城' if i % 2 else '临川城',
+                                                   'note': '巡视%d' % i})
+            st = data(await session.call_tool('read_state', {}))
+            check('长局：事件溢出自动归档，状态文件不膨胀',
+                  len(st['event_log']) <= 5 and st.get('archived_events', 0) > 0,
+                  '保留 %d / 归档 %d' % (len(st['event_log']), st.get('archived_events', 0)))
+            rc = data(await session.call_tool('recall', {'query': '巡视'}))
+            check('长局：可按关键词回捞归档事件', len(rc.get('matches', [])) > 0,
+                  '命中 %d 条' % len(rc.get('matches', [])))
+            await session.call_tool('write_summary', {'text': '本段：买丹、结交、动身听霄城。'})
+            rp = data(await session.call_tool('recap', {'budget_chars': 400}))
+            check('长局：回顾包带摘要且遵守字符预算',
+                  '听霄城' in (rp.get('summary') or '') and rp.get('used_chars', 0) <= 400,
+                  '用量 %d/%d' % (rp.get('used_chars'), rp.get('budget_chars')))
+            before = data(await session.call_tool('read_state', {}))['entities']['player']
+            adv = data(await session.call_tool('advance', {'next_level': '淬体八段', 'insight': 0.8}))
+            after = data(await session.call_tool('read_state', {}))['entities']['player']
+            ok_shape = (after['level'] == '淬体八段' and after['hp_max'] >= before['hp_max']) if adv['success']                 else (after['hp'] < before['hp'] and after.get('mind_scars', 0) == before.get('mind_scars', 0) + 1)
+            mil = data(await session.call_tool('read_state', {})).get('milestones', [])
+            check('长局：突破由引擎判定并落数值与大事记',
+                  ok_shape and any('突破' in m.get('desc', '') for m in mil),
+                  'success=%s chance=%s 大事记 %d 条' % (adv['success'], adv['chance'], len(mil)))
+            nc = data(await session.call_tool('narration_context', {'scene_text': '听霄城'}))
+            check('长局：叙事包带最新摘要与大事记',
+                  bool(nc.get('latest_summary')) and len(nc.get('milestones', [])) > 0)
 
             # 16. 移动 + 探索图鉴 + 实况面板
             panel_state = os.path.join(tmp, 'panel.save.json')

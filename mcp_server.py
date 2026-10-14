@@ -17,6 +17,7 @@ World Walker rule engine exposed over MCP. The host agent narrates; the engine d
 import json
 import os
 import random
+import re
 import sys
 
 # 引擎内部用 `import game_engine.*`，要求仓库目录名恰好是 game_engine。
@@ -107,7 +108,7 @@ class RelationIn(BaseModel):
 
 server = MCPServer(
     name="world-walker",
-    version="0.6.0",
+    version="0.7.0",
     instructions=(
         "万界·行者规则引擎：世界观无关的因果推演内核。主持文字互动游戏时："
         "先 world_schema 了解状态结构，按玩家设定调用 world_init 建世界；"
@@ -139,6 +140,9 @@ NEW_GAME_BRIEF = """你在主持一局文字互动游戏，数值结算必须全
 - 玩家想反悔/分叉剧情：`snapshot` 存点、`restore` 回退（引擎状态是确定性的，回退后重放同种子一致）。
 - 开局后调一次 `open_panel`：给玩家一个只读实况面板（血量/心流/图鉴/编年史/行情，自动刷新）——
   玩家记不住的东西（去过哪、见过谁、什么价）都在上面。
+- 成长走 `advance`（突破由引擎判定，别自己改等级）；每 20-50 回合调一次 `write_summary` 写摘要，
+  接不上前文时用 `recap`；玩家提到很久以前的事，用 `recall` 按关键词把旧事捞回来——
+  叙述只带「最近若干回合 + 最新摘要 + 大事记」，永远不要把全部历史塞进上下文。
 
 ## 本次设定
 {setting}
@@ -294,7 +298,7 @@ def _load() -> dict:
 
 
 def _finish(state: dict, result: dict) -> dict:
-    """状态落盘，并在返回给 Agent 的结果上标注当前 tick。"""
+    """状态落盘（save_state 里顺带归档旧事件），并在返回给 Agent 的结果上标注当前 tick。"""
     save_state(state, _state_path())
     result["_tick"] = state.get("tick", 0)
     return result
@@ -339,6 +343,31 @@ def _remember(state: dict, kind: str, value: str) -> bool:
     if len(lst) > 200:
         del lst[0]
     return True
+
+
+DEFAULT_CONFIG = {"event_log_keep": 200, "archive": True, "recap_budget_chars": 1500,
+                  "summary_keep": 30, "milestone_keep": 200, "panel_port": 8765}
+
+
+def _cfg(state: dict) -> dict:
+    """对局配置（缺省值补齐；configure 工具可改）。"""
+    c = state.setdefault("config", {})
+    for k, v in DEFAULT_CONFIG.items():
+        c.setdefault(k, v)
+    return c
+
+
+def _archive_path() -> str:
+    return _state_path() + ".log.jsonl"
+
+
+def _milestone(state: dict, kind: str, desc: str) -> None:
+    """记一条大事记（recap 与面板都用它；长局里"记住发生了什么"靠这个）。"""
+    ms = state.setdefault("milestones", [])
+    ms.append({"tick": state.get("tick", 0), "kind": kind, "desc": str(desc)[:200]})
+    keep = int(_cfg(state).get("milestone_keep", 200))
+    if len(ms) > keep:
+        del ms[:len(ms) - keep]
 
 
 def _require_entity(state: dict, entity_id: str, role: str) -> dict:
@@ -416,6 +445,9 @@ def world_schema() -> dict:
         "lore": "世界书条目数组（keys/secondary_keys/content/selective/constant/order/enabled）；"
                 "由 import_lorebook 或角色卡的 character_book 带入， narration_context 按关键词触发",
         "codex": "探索图鉴 {locations, people, items, lore}——引擎自动记录，open_panel 的面板会渲染它",
+        "milestones": "大事记（突破/击杀/初次抵达/因果升级自动记；recap 与面板都读它）",
+        "summaries": "章节摘要（write_summary 写入；长局靠「摘要+大事记+recall」三层记忆）",
+        "config": "对局配置（event_log_keep/recap_budget_chars/summary_keep/milestone_keep/panel_port）",
         "currency": "货币名（默认「灵石」；设定包里给 currency=「玄晶」即全局生效）",
         "market_item_shape": {
             "name": "显示名（如 '安神丹'）", "price": "当前价", "supply": "库存",
@@ -450,6 +482,11 @@ def world_schema() -> dict:
             "travel": "移动（唯一能改玩家 location 的工具；首次到达记图鉴）",
             "open_panel": "打开实况面板（只读网页，自动刷新）",
             "load_setting": "从设定包一键开一局（settings/*.setting.json）",
+            "advance": "突破（引擎判定成败并给数值后果；长局的核心成长循环）",
+            "recall": "按关键词回捞历史事件（归档 + 近期事件）",
+            "write_summary": "写章节摘要（长局记忆；每 20-50 回合一次）",
+            "recap": "回顾包：最新摘要 + 大事记 + 最近事件（按字符预算裁剪）",
+            "configure": "查看/修改对局配置（归档保留量、摘要预算等）",
         },
     }
 
@@ -569,6 +606,8 @@ def combat(attacker: str, defender: str, action_type: str = "attack",
     for e in result.get("events", []):
         log_event(state, "combat", e)
     _remember(state, "people", state.get("entities", {}).get(defender, {}).get("name", defender))
+    if result.get("defender_dead"):
+        _milestone(state, "击杀", "%s 击败了 %s" % (attacker, result.get("defender", defender)))
     return _finish(state, result)
 
 
@@ -628,6 +667,8 @@ def karma(actor: str, karma_type: str, victim: str | None = None) -> dict:
     consequence = get_karma_consequence(state, actor)
     if consequence["triggered"]:
         result["karma_consequence"] = consequence
+        if consequence.get("type") in ("strong_pressure", "catastrophe"):
+            _milestone(state, "因果", "业债累积触发「%s」" % consequence.get("desc", ""))
     return _finish(state, result)
 
 
@@ -680,6 +721,9 @@ def status() -> dict:
         },
         "unsettled_karma": sum(e["amount"] for e in state.get("karma_ledger", [])
                                if e["from"] == "player" and not e["settled"]),
+        "latest_summary": ((state.get("summaries") or [{}])[-1].get("text", "")),
+        "milestones": ["第%d回合·%s" % (m.get("tick", 0), m.get("desc", ""))
+                       for m in state.get("milestones", [])[-6:]],
     })
 
 
@@ -791,7 +835,150 @@ def narration_context(scene_text: str = "", recent: int = 12) -> dict:
         "flags": state.get("world_flags", []),
         "unsettled_karma": sum(e["amount"] for e in state.get("karma_ledger", [])
                                if e["from"] == "player" and not e["settled"]),
+        "latest_summary": ((state.get("summaries") or [{}])[-1].get("text", "")),
+        "milestones": ["第%d回合·%s" % (m.get("tick", 0), m.get("desc", ""))
+                       for m in state.get("milestones", [])[-6:]],
     })
+
+
+@server.tool()
+def advance(next_level: str, insight: float = 0.0) -> dict:
+    """尝试突破（Chinese: 引擎按状态判定成败并给数值后果；next_level 是你按设定阶梯取的下一层名，
+    insight 是你对"这次突破的叙事依据"打分 0~1——顿悟/点拨/生死一线才给高分）。
+    Attempt a breakthrough: the engine decides success and applies the consequences."""
+    state = _load()
+    _seed_rng(state)
+    player = state.get("entities", {}).get("player")
+    if not player:
+        raise ValueError("状态里没有 player")
+    attrs = player.get("attrs", {})
+    hp_max = max(1, int(player.get("hp_max", 1)))
+    hp_ratio = float(player.get("hp", hp_max)) / hp_max
+    flow = flow_channel_status(state).get("state")
+    karma = sum(e.get("amount", 0) for e in state.get("karma_ledger", [])
+                if e.get("from") == "player" and not e.get("settled"))
+    penalty = 0.30 if karma >= 300 else 0.15 if karma >= 150 else 0.05 if karma >= 60 else 0.0
+    base = 0.45 + 0.25 * max(0.0, min(1.0, float(insight))) + 0.15 * (hp_ratio - 0.5)
+    base += 0.10 if flow == "flow" else (-0.10 if flow in ("anxiety", "boredom") else 0.0)
+    chance = max(0.05, min(0.95, base - penalty))
+    ok = random.random() < chance
+    if ok:
+        player["hp_max"] = int(hp_max * 1.12)
+        player["hp"] = player["hp_max"]
+        player["mp_max"] = int(int(player.get("mp_max", 0)) * 1.15)
+        player["mp"] = player["mp_max"]
+        for k in ATTR_KEYS:
+            attrs[k] = int(attrs.get(k, 10)) + 1
+        player["level"] = str(next_level)
+        player["stage"] = int(player.get("stage", 0)) + 1
+        log_event(state, "breakthrough", "突破至 %s" % next_level)
+        _milestone(state, "突破", "突破至 %s（第 %d 次）" % (next_level, player["stage"]))
+    else:
+        backlash = max(1, int(hp_max * 0.25))
+        player["hp"] = max(1, int(player.get("hp", 1)) - backlash)
+        player["mind_scars"] = int(player.get("mind_scars", 0)) + 1
+        log_event(state, "breakthrough", "冲击 %s 失败，反噬 %d 点气血" % (next_level, backlash))
+        _milestone(state, "突破失败", "冲击 %s 失败（心伤 +1）" % next_level)
+    return _finish(state, {"success": ok, "chance": round(chance, 2), "level": player.get("level"),
+                           "hp": player.get("hp"), "hp_max": player.get("hp_max"),
+                           "mp_max": player.get("mp_max"), "mind_scars": player.get("mind_scars", 0),
+                           "hint": "业债压成功率；心境不稳（焦虑/无聊）也会减成——先稳住，再冲。"})
+
+
+@server.tool()
+def recall(query: str, limit: int = 8) -> dict:
+    """按关键词回捞历史事件（Chinese: 长局必备——玩家提到很久以前的事时，先把旧事找回来）。
+    Keyword search over the event archive and the recent log."""
+    q = str(query or "").strip()
+    if not q:
+        raise ValueError("query 不能为空")
+    terms = [t.lower() for t in re.split(r"[\s,，、]+", q) if t]
+    state = _load()
+    from collections import deque
+    tail = deque(maxlen=int(limit))
+    path = _archive_path()
+    if os.path.exists(path):
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                try:
+                    e = json.loads(line)
+                except Exception:
+                    continue
+                if any(t in str(e.get("desc", "")).lower() for t in terms):
+                    tail.append(e)
+    hits = list(tail)
+    for e in state.get("event_log", []):
+        if any(t in str(e.get("desc", "")).lower() for t in terms):
+            hits.append(e)
+    hits = sorted(hits, key=lambda x: int(x.get("tick", 0)), reverse=True)[:int(limit)]
+    return {"query": q, "matches": hits, "archived_events": int(state.get("archived_events", 0)),
+            "archive_file": path}
+
+
+@server.tool()
+def write_summary(text: str) -> dict:
+    """写下这一段的摘要（Chinese: 长局记忆的核心——只写"变了什么"，三五句就够，别写流水账）。
+    Store a chapter summary for long games."""
+    state = _load()
+    body = str(text or "").strip()
+    if not body:
+        raise ValueError("摘要不能为空")
+    ss = state.setdefault("summaries", [])
+    ss.append({"upto_tick": int(state.get("tick", 0)), "text": body[:1500]})
+    keep = int(_cfg(state).get("summary_keep", 30))
+    if len(ss) > keep:
+        del ss[:len(ss) - keep]
+    return _finish(state, {"summaries": len(ss), "upto_tick": ss[-1]["upto_tick"]})
+
+
+@server.tool()
+def recap(recent: int = 12, budget_chars: int = 0) -> dict:
+    """长局回顾包（Chinese: 最新摘要 + 大事记 + 最近事件，按字符预算裁剪；接不上前文时先看它）。
+    Long-game recap: latest summary + milestones + recent events, budgeted."""
+    state = _load()
+    cfg = _cfg(state)
+    budget = int(budget_chars or cfg.get("recap_budget_chars", 1500))
+    summaries = state.get("summaries") or []
+    out = {"summary": (summaries[-1]["text"] if summaries else ""),
+           "summary_upto_tick": (summaries[-1]["upto_tick"] if summaries else None),
+           "milestones": [], "recent_events": [],
+           "archived_events": int(state.get("archived_events", 0)),
+           "lore_entries": len(state.get("lore", [])),
+           "codex": {k: len(v) for k, v in (state.get("codex") or {}).items()}}
+    used = len(out["summary"])
+    for m in reversed(state.get("milestones", [])):
+        s = "第%d回合·%s" % (m.get("tick", 0), m.get("desc", ""))
+        if used + len(s) > budget:
+            break
+        out["milestones"].append(s)
+        used += len(s)
+    for e in list(reversed(state.get("event_log", [])))[:int(recent)]:
+        s = "第%d回合·%s" % (e.get("tick", 0), e.get("desc", ""))
+        if used + len(s) > budget:
+            break
+        out["recent_events"].append(s)
+        used += len(s)
+    out["budget_chars"] = budget
+    out["used_chars"] = used
+    return out
+
+
+@server.tool()
+def configure(event_log_keep: int | None = None, recap_budget_chars: int | None = None,
+              summary_keep: int | None = None, milestone_keep: int | None = None,
+              panel_port: int | None = None, currency: str | None = None) -> dict:
+    """查看/修改对局配置（Chinese: 留空的项不改；返回当前全量配置。长局的存档/归档行为都在这里调）。
+    View or update per-game config."""
+    state = _load()
+    cfg = _cfg(state)
+    for key, val in (("event_log_keep", event_log_keep), ("recap_budget_chars", recap_budget_chars),
+                     ("summary_keep", summary_keep), ("milestone_keep", milestone_keep),
+                     ("panel_port", panel_port)):
+        if val is not None:
+            cfg[key] = int(val)
+    if currency:
+        state["currency"] = str(currency)
+    return _finish(state, cfg)
 
 
 @server.tool()
@@ -849,6 +1036,8 @@ def travel(location: str, note: str = "") -> dict:
         _remember(state, "people", state["entities"][k].get("name", k))
     log_event(state, "travel", "抵达「%s」%s%s" % (loc, "（初次探索）" if first else "",
                                                   ("：" + note) if note else ""))
+    if first:
+        _milestone(state, "探索", "初次抵达「%s」" % loc)
     return _finish(state, {"location": loc, "first_time": first,
                            "has_market": loc in state.get("market", {}),
                            "entities_here": here,

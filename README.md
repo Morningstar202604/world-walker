@@ -24,7 +24,7 @@ pip install -e ".[mcp]"
 { "mcpServers": { "world-walker": { "command": "world-walker-mcp" } } }
 ```
 
-把设定丢给 Agent 即可开一局。支持 MCP prompt 的客户端还能一键开局：调 `new_game`（参数填设定），
+把设定丢给 Agent 即可开一局（仓库自带 `settings/玄枢界.setting.json`，`load_setting` 一句话开局）。支持 MCP prompt 的客户端还能一键开局：调 `new_game`（参数填设定），
 它会生成完整开局指令。流程是：`world_init`（按设定建世界，入参带字段级说明，含 seed）→
 玩家每个行动由 `combat` / `trade` / `social` / `karma` 结算 → `narration_context` 取触发的
 设定条目、在场角色的卡面文字与编年史 → 文学描写 → `tick` 收回合 → 每 3-5 回合用
@@ -33,12 +33,20 @@ pip install -e ".[mcp]"
 - 生态兼容（不重复造轮子）：直接吃酒馆（SillyTavern）生态的**角色卡**（`.png` 内嵌 / `.json`，
   V1/V2/V3）与**世界书**（world-info / 卡内 `character_book`，含 selective/constant/disable 语义）；
   `character_card_read` 看卡 → `add_character` 入局（卡面文字进叙事层）→ `import_lorebook` 并入设定
-- 实况面板：`open_panel` 起一个**只读网页**（气血/内力/心流/世界相位/探索图鉴/编年史/市场行情，
-  状态一变就自动刷新）；玩家记不住的东西——去过哪、见过谁、什么价——都在上面。
+- **长局支持（奔着百万回合设计）**：三层记忆，叙事永远只带该带的——
+  · `write_summary` 章节摘要（宿主每 20-50 回合写一次，只写"变了什么"）
+  · 大事记（突破/击杀/初次抵达/因果升级自动记录，`recap` 与面板都读它）
+  · 事件自动归档：状态文件只保留最近 N 条（默认 200，`configure` 可调），
+    更旧的追加进 `<状态文件>.log.jsonl`，需要时用 `recall` 按关键词回捞
+  · `recap(budget_chars)` 按字符预算给「最新摘要 + 大事记 + 最近事件」
+- **成长闭环**：`advance` 突破——引擎按（洞察/心境/业债/气血）判定成败并落数值后果
+  （成功涨上限与属性、失败反噬气血并留心伤），杜绝手改等级
+- 实况面板：`open_panel` 起一个**只读网页**（气血/内力/心流/世界相位/探索图鉴/大事记/编年史/市场行情，
+  状态一变就自动刷新）；玩家记不住的东西——去过哪、见过谁、什么价、发生过什么——都在上面。
   也可单独跑：`python panel.py --state ww_state.json`
 - 移动与图鉴：`travel` 是唯一能改玩家位置的工具，首次到达自动进图鉴（地点/人物/物品/已触发设定）
 - 回合可回退：`snapshot` / `restore`（引擎状态确定性，回退后重放同种子一致）
-- 端到端自检：`python scripts/verify_mcp_stdio.py`（38 项断言，含酒馆生态兼容/图鉴/面板与确定性）
+- 端到端自检：`python scripts/verify_mcp_stdio.py`（45 项断言，含酒馆生态/图鉴/面板/设定包/长局与确定性）
 - 实测：opencode（GLM-5.2）接入后按设定建局、连续结算三个行动，叙事数值与引擎状态文件逐项一致
 - 可复现：开局带 `seed`；每次结算的随机数由状态里的 `rng_seed` 与 `rng_counter` 共同决定，并随状态落盘
 
@@ -75,7 +83,7 @@ python engine.py info_weight --state game_state.json --probability 0.05
 ```
 game_engine/                      # 仓库根即 game_engine 包（导入别名已放开，目录名任意）
 ├── engine.py                     # CLI 入口（14 条命令）
-├── mcp_server.py                 # MCP 服务器（21 个工具；除 mcp>=2 外无额外依赖）
+├── mcp_server.py                 # MCP 服务器（27 个工具；除 mcp>=2 外无额外依赖）
 ├── state_schema.py               # 状态结构 + 辅助函数
 ├── init_game.py                  # 生成示例世界（青云界）
 ├── pyproject.toml                # pip install -e ".[mcp]"；命令 world-walker / world-walker-mcp

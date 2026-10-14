@@ -59,7 +59,22 @@ def load_state(path):
         return json.load(f)
 
 def save_state(state, path):
-    """保存状态 JSON 到路径"""
+    """保存状态 JSON 到路径。
+
+    长局保护：写入前把超出保留量的旧事件归档到 `<path>.log.jsonl`（追加式），
+    保留量见 state.config.event_log_keep（默认 200）。这样状态文件与上下文都不会被历史撑爆，
+    旧事仍可按关键词用 recall 回捞。
+    """
+    cfg = state.get("config") or {}
+    keep = int(cfg.get("event_log_keep", 200))
+    log = state.get("event_log") or []
+    if len(log) > keep:
+        overflow, state["event_log"] = log[:-keep], log[-keep:]
+        if cfg.get("archive", True):
+            with open(path + ".log.jsonl", "a", encoding="utf-8") as f:
+                for e in overflow:
+                    f.write(json.dumps(e, ensure_ascii=False) + "\n")
+        state["archived_events"] = int(state.get("archived_events", 0)) + len(overflow)
     with open(path, 'w', encoding='utf-8') as f:
         json.dump(state, f, ensure_ascii=False, indent=2)
 
@@ -114,6 +129,4 @@ def log_event(state, etype, desc):
         "type": etype,
         "desc": desc
     })
-    # 只保留最近 50 条
-    if len(state["event_log"]) > 50:
-        state["event_log"] = state["event_log"][-50:]
+    # 只追加；截断与归档统一在 save_state 里做（保证任何写入路径都不会漏归档）

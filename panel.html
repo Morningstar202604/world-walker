@@ -96,6 +96,10 @@
       <div class="row"><span class="k">已触发设定</span></div><div class="kv" id="cx-lore"></div>
     </div>
     <div class="card">
+      <h2>大事记 <span class="sub" id="memhint"></span></h2>
+      <ul class="chronicle" id="milestones" style="max-height:150px"><li class="empty">暂无</li></ul>
+    </div>
+    <div class="card">
       <h2>编年史</h2>
       <ul class="chronicle" id="chronicle"><li class="empty">暂无事件</li></ul>
     </div>
@@ -190,6 +194,9 @@ function render(v) {
         return `<tr><td>${it.name}</td><td class="${cls}">${it.price} ${sym}</td><td>${it.base_price}</td><td>${it.supply}</td></tr>`;
      }).join('')}</table>`).join('') : '<span class="empty">此界无市</span>';
 
+  $('milestones').innerHTML = (v.milestones || []).length
+    ? v.milestones.map((m) => `<li><span>${m}</span></li>`).join('') : '<li class="empty">暂无</li>';
+  $('memhint').textContent = `摘要 ${v.summaries ?? 0} 条 · 已归档事件 ${v.archived_events ?? 0} 条`;
   chips($('flags'), v.flags, 'dim');
 }
 

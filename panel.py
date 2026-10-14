@@ -105,6 +105,10 @@ def view_model(state_path):
         "lore_total": len(s.get("lore", [])),
         "market": market,
         "chronicle": [e for e in s.get("event_log", [])[-24:]][::-1],
+        "milestones": ["第%d回合·%s" % (m.get("tick", 0), m.get("desc", ""))
+                       for m in s.get("milestones", [])[-10:]][::-1],
+        "summaries": len(s.get("summaries", [])),
+        "archived_events": int(s.get("archived_events", 0)),
         "flags": s.get("world_flags", []),
     }
 

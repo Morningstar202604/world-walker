@@ -35,11 +35,18 @@ the engine's JSON into prose — it must never invent numbers.
 - Ecosystem compatible (no reinventing): reads SillyTavern-style **character cards** (`.png`-embedded
   or `.json`, V1/V2/V3) and **world info** lorebooks (world-info / card `character_book`, with
   selective/constant/disable semantics); `character_card_read` → `add_character` → `import_lorebook`
-- Live panel: `open_panel` serves a **read-only dashboard** (HP/MP, flow, world phase, exploration
-  codex, chronicle, market prices; auto-refreshes on state change). Standalone: `python panel.py --state ww_state.json`
+- **Long-game support (built for a million turns)**: three memory layers — `write_summary` chapter
+  summaries (host writes one every 20-50 turns), milestones (breakthroughs / kills / first arrivals,
+  auto-recorded), and automatic event archiving (state keeps the last N events, default 200; older ones
+  spill to `<state>.log.jsonl`, searchable via `recall`). `recap(budget_chars)` assembles summary +
+  milestones + recent events under a character budget.
+- **Growth loop**: `advance` — the engine rolls breakthroughs from insight / mind / karma / HP and applies
+  the numeric consequences (success raises caps and attrs, failure backlashes HP and leaves a mind scar).
+- Live panel: `open_panel` serves a **read-only dashboard** (HP/MP, flow, world phase, exploration codex,
+  milestones, chronicle, market prices; auto-refreshes). Standalone: `python panel.py --state ww_state.json`
 - Travel & codex: `travel` is the only tool that moves the player; first arrival enters the codex
 - Deterministic undo: `snapshot` / `restore`
-- End-to-end self-check: `python scripts/verify_mcp_stdio.py` (38 assertions, including ecosystem compat / codex / panel / determinism)
+- End-to-end self-check: `python scripts/verify_mcp_stdio.py` (45 assertions, including ecosystem / codex / panel / settings / long game / determinism)
 - Field-tested: opencode (GLM-5.2) builds a world from the setting and settles three actions in a row;
   its narration matches the engine's state file item by item
 - Reproducible: pass `seed` at world_init; every settlement seeds its RNG from the state's
@@ -78,7 +85,7 @@ python engine.py info_weight --state game_state.json --probability 0.05
 ```
 game_engine/                      # the repo root IS the game_engine package (any folder name works)
 ├── engine.py                     # CLI entry (14 commands)
-├── mcp_server.py                 # MCP server (21 tools; only extra dep is mcp>=2)
+├── mcp_server.py                 # MCP server (27 tools; only extra dep is mcp>=2)
 ├── state_schema.py               # State schema + helpers
 ├── init_game.py                  # Writes the sample world (青云界)
 ├── pyproject.toml                # pip install -e ".[mcp]"; commands world-walker / world-walker-mcp
