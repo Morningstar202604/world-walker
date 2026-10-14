@@ -24,12 +24,14 @@ pip install -e ".[mcp]"
 { "mcpServers": { "world-walker": { "command": "world-walker-mcp" } } }
 ```
 
-然后把设定丢给 Agent：「照我的设定开一局」。流程是：`world_schema`（了解状态结构）→
-`world_init`（按设定建世界，含 seed）→ 玩家每个行动由 `combat` / `trade` / `social` / `karma`
-结算 → `tick` 收回合 → 每 3-5 回合用 `narrative` + `status` 检查涌现事件与心流；
-Agent 只负责把引擎返回的 JSON 转写成文学描写，不得编造数值。
+把设定丢给 Agent 即可开一局。支持 MCP prompt 的客户端还能一键开局：调 `new_game`（参数填设定），
+它会生成完整开局指令。流程是：`world_init`（按设定建世界，入参带字段级说明，含 seed）→
+玩家每个行动由 `combat` / `trade` / `social` / `karma` 结算 → `tick` 收回合 → 每 3-5 回合用
+`narrative` + `status` 检查涌现事件与心流；Agent 只负责把引擎返回的 JSON 转写成文学描写，
+不得编造数值（字段有其他疑问时用 `world_schema` 查完整结构）。
 
-- 端到端自检：`python scripts/verify_mcp_stdio.py`（22 项断言，含「同种子 + 同行动 → 结果一致」）
+- 端到端自检：`python scripts/verify_mcp_stdio.py`（25 项断言，含「同种子 + 同行动 → 结果一致」）
+- 实测：opencode（GLM-5.2）接入后按设定建局、连续结算三个行动，叙事数值与引擎状态文件逐项一致
 - 可复现：开局带 `seed`；每次结算的随机数由状态里的 `rng_seed` 与 `rng_counter` 共同决定，并随状态落盘
 
 ### 方式 B：CLI（手动结算）

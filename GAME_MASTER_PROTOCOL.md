@@ -6,6 +6,7 @@
 > 暴露的 13 个工具，语义与本文命令一一对应：`cognition`/`flow`/`identity`/`panarchy`/
 > `moral_update` 合并为 `status`，`info_weight` 改名为 `narrative_weight`，`world_state`
 > 改名为 `read_state`；另增建局三件套 `world_schema` / `world_init` / `world_open`。
+> 一键开局：调 `new_game` prompt（参数填设定），产出「协议 + 设定 + 状态文件」的完整开局指令。
 > 安装 `pip install -e ".[mcp]"` 后，客户端命令填 `world-walker-mcp`。
 
 ---

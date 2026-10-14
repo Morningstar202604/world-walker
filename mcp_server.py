@@ -52,9 +52,62 @@ from game_engine.rules.social_extended import merit_quality
 from game_engine.rules.world_dynamics import event_information
 from game_engine.state_schema import entity_key, load_state, log_event, save_state
 
+from pydantic import BaseModel, Field
+
+
+class WorldInfo(BaseModel):
+    """世界基本盘（设定里的世界观信息）。"""
+    name: str = Field(description="世界名，如「临江渡口」「青云界」")
+    era: str = Field(default="", description="纪元/时代，如「江湖历三年」")
+    location_desc: str = Field(default="", description="开场地点描写（两三句，用于开局叙事）")
+
+
+class EntityIn(BaseModel):
+    """一个角色。主角用 player 参数传入；NPC 放进 entities 数组并给 id。"""
+    id: str | None = Field(default=None, description="实体 id（NPC 必填；player 不用填）")
+    name: str = Field(description="显示名")
+    faction: str = Field(default="", description="阵营/势力")
+    attrs: dict[str, int] = Field(default_factory=dict,
+                                 description="五维属性 str/dex/int/con/cha，缺省按 10")
+    hp: int | None = Field(default=None, description="当前生命，缺省等于 hp_max")
+    hp_max: int = Field(default=100, description="生命上限")
+    mp: int = Field(default=0, description="当前内力/法力")
+    mp_max: int = Field(default=0, description="内力上限")
+    level: str = Field(default="凡人", description="境界/等级，如「练气三层」「一流高手」「C-class」")
+    gold: int = Field(default=0, description="钱财")
+    location: str = Field(default="", description="所在地（要与 market 的 location 一致才可交易）")
+    skills: list[str] = Field(default_factory=list, description="技能名（可选）")
+    morality: list[int] = Field(default_factory=list, description="六维道德向量（可选，默认全 0）")
+
+
+class MarketItemIn(BaseModel):
+    """市场里的一件商品。交易工具用 key 定位它（不是显示名）。"""
+    key: str = Field(description="商品 key，交易时传它，如 chen_jiu")
+    name: str = Field(description="显示名，如「陈酒」")
+    price: int = Field(default=50, description="当前价")
+    supply: int = Field(default=20, description="库存")
+    base_price: int | None = Field(default=None, description="基准价（价格会回归它），缺省等于 price")
+    type: str = Field(default="", description="类别（丹药/武器/情报…）")
+    desc: str = Field(default="", description="一句话描述")
+
+
+class MarketIn(BaseModel):
+    """一个地点的市场。"""
+    location: str = Field(description="地点（与角色的 location 一致）")
+    items: list[MarketItemIn] = Field(default_factory=list, description="该地点的商品")
+
+
+class RelationIn(BaseModel):
+    """一条关系（键由引擎按字母序生成，不用你操心顺序）。"""
+    a: str = Field(description="实体 id 之一")
+    b: str = Field(description="实体 id 之二")
+    affinity: int = Field(default=0, description="亲密度 -100~100")
+    respect: int = Field(default=0, description="敬重/畏惧 -100~100")
+
+
 server = MCPServer(
     name="world-walker",
-    version="0.2.0",
+    version="0.3.0",
     instructions=(
         "万界·行者规则引擎：世界观无关的因果推演内核。主持文字互动游戏时："
         "先 world_schema 了解状态结构，按玩家设定调用 world_init 建世界；"
@@ -62,6 +115,40 @@ server = MCPServer(
         "不得自行编造数值结果；回合结束调用 tick；每 3-5 回合调用 narrative 与 status 一次。"
     ),
 )
+
+NEW_GAME_BRIEF = """你在主持一局文字互动游戏，数值结算必须全部通过 world-walker 的工具完成。
+
+## 铁律
+1. 所有数值（命中/伤害/价格/关系/因果）必须由工具结算，不许自行编造或心算。
+2. 玩家只该看到你的文学描写；JSON 与字段名不要让玩家看到，数值要自然融进叙事。
+3. 不要手改状态文件，一切变更都经工具落盘。
+
+## 回合流程
+- 开局：`world_init`（设定与状态文件路径见下）→ 写两三百字开场（可用 world_info.location_desc）。
+- 每个玩家行动：需要时 `read_state` 看现状 → 选对应工具结算（combat / trade / social / karma）
+  → 把返回 JSON 转写成文学描写。
+- 回合收尾：`tick`。
+- 每 3-5 回合：`narrative`（涌现事件与相位）与 `status`（心流/身份/道德/认知）各一次，
+  把结果织进叙事节奏（例如心流偏低就安排一段缓冲剧情）。
+- 字段不清楚时先 `world_schema` 查（world_init 的入参 schema 已带字段说明，通常不必查）。
+
+## 本次设定
+{setting}
+
+## 状态文件
+{state_path}（seed={seed}，同种子可复现）
+
+现在开始：先 `world_init` 开起这局，然后写开场。"""
+
+
+@server.prompt(name="new_game", title="开一局新游戏",
+               description="把设定交给规则引擎，开始一局文字互动游戏。参数 setting 填你的设定（世界观/主角/NPC/地点/商品表）")
+def new_game(setting: str, state_path: str = "ww_state.json", seed: int = 20261014) -> str:
+    """生成「开局指令」：协议 + 你的设定 + 状态文件，客户端把它作为一条用户消息发给 Agent。"""
+    return (NEW_GAME_BRIEF.replace("{setting}", setting.strip())
+                         .replace("{state_path}", state_path)
+                         .replace("{seed}", str(seed)))
+
 
 _active = {"path": None}
 ATTR_KEYS = ("str", "dex", "int", "con", "cha")
@@ -202,17 +289,16 @@ def world_schema() -> dict:
 
 
 @server.tool()
-def world_init(state_path: str, world: dict, player: dict, entities: list | None = None,
-               market: list | None = None, relations: list | None = None,
-               world_flags: list | None = None, seed: int = 20261014) -> dict:
+def world_init(state_path: str, world: WorldInfo, player: EntityIn,
+               entities: list[EntityIn] | None = None, market: list[MarketIn] | None = None,
+               relations: list[RelationIn] | None = None, world_flags: list[str] | None = None,
+               seed: int = 20261014) -> dict:
     """按玩家设定创建一局新游戏并写盘（Chinese: 设定 → 世界状态；创建后即成为当前对局）。
     Create a new game from the player's setting bible and make it the active session."""
 
-    if not isinstance(world, dict) or not world.get("name"):
-        raise ValueError("world 必须是 {name, era, location_desc}，name 必填")
-
-    state_entities = {"player": _normalize_entity("player", player)}
-    for raw in entities or []:
+    state_entities = {"player": _normalize_entity("player", player.model_dump(exclude_none=True))}
+    for npc in entities or []:
+        raw = npc.model_dump(exclude_none=True)
         eid = str(raw.get("id") or "").strip()
         if not eid:
             raise ValueError("entities 里每个 NPC 都必须有 id")
@@ -222,35 +308,27 @@ def world_init(state_path: str, world: dict, player: dict, entities: list | None
 
     state_market = {}
     for loc in market or []:
-        lid = str(loc.get("location") or "").strip()
-        if not lid:
-            raise ValueError("market 里每个地点都必须有 location")
         items = {}
-        for item in loc.get("items") or []:
-            key = str(item.get("key") or "").strip()
-            if not key:
-                raise ValueError("market 商品必须有 key（交易工具用它定位商品）")
-            items[key] = {
-                "name": str(item.get("name", key)),
-                "price": int(item.get("price", 50)),
-                "supply": int(item.get("supply", 20)),
-                "base_price": int(item.get("base_price", item.get("price", 50))),
-                "type": str(item.get("type", "")),
-                "desc": str(item.get("desc", "")),
+        for item in loc.items:
+            d = item.model_dump(exclude_none=True)
+            items[item.key] = {
+                "name": d.get("name", item.key),
+                "price": int(d.get("price", 50)),
+                "supply": int(d.get("supply", 20)),
+                "base_price": int(d.get("base_price", d.get("price", 50))),
+                "type": str(d.get("type", "")),
+                "desc": str(d.get("desc", "")),
             }
-        state_market[lid] = items
+        state_market[loc.location] = items
 
     state_relations = {}
     for rel in relations or []:
-        a, b = str(rel.get("a", "")).strip(), str(rel.get("b", "")).strip()
-        if not a or not b:
-            raise ValueError("relations 每项需要 a 与 b")
-        for eid in (a, b):
+        for eid in (rel.a, rel.b):
             if eid not in state_entities:
                 raise ValueError("关系引用了不存在的实体: %s" % eid)
-        state_relations[entity_key(a, b)] = {
-            "affinity": int(rel.get("affinity", 0)),
-            "respect": int(rel.get("respect", 0)),
+        state_relations[entity_key(rel.a, rel.b)] = {
+            "affinity": int(rel.affinity),
+            "respect": int(rel.respect),
         }
 
     state = {
@@ -263,9 +341,9 @@ def world_init(state_path: str, world: dict, player: dict, entities: list | None
         "world_flags": list(world_flags or []),
         "event_log": [],
         "world_info": {
-            "name": str(world["name"]),
-            "era": str(world.get("era", "")),
-            "location_desc": str(world.get("location_desc", "")),
+            "name": world.name,
+            "era": world.era,
+            "location_desc": world.location_desc,
         },
     }
     log_event(state, "system", "世界「%s」开局：%s" % (state["world_info"]["name"],

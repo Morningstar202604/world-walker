@@ -24,14 +24,17 @@ Add to your MCP client (Claude Code / Codex / Cursor / any MCP-capable agent):
 { "mcpServers": { "world-walker": { "command": "world-walker-mcp" } } }
 ```
 
-Then hand your setting bible to the agent: "start a game from my setting". The loop is:
-`world_schema` (learn the state shape) → `world_init` (build the world from the setting, with a seed) →
+Hand your setting bible to the agent and play. Clients with MCP prompt support can start in one step:
+call `new_game` (pass the setting) and it produces the full opening brief. The loop is:
+`world_init` (build the world from the setting; typed args with field docs; takes a seed) →
 each player action is settled by `combat` / `trade` / `social` / `karma` → `tick` closes the turn →
 every 3-5 turns call `narrative` + `status` for emergent events and flow state. The agent only turns
-the engine's JSON into prose — it must never invent numbers.
+the engine's JSON into prose — it must never invent numbers (use `world_schema` if anything is unclear).
 
-- End-to-end self-check: `python scripts/verify_mcp_stdio.py` (22 assertions, including
+- End-to-end self-check: `python scripts/verify_mcp_stdio.py` (25 assertions, including
   "same seed + same action → identical result")
+- Field-tested: opencode (GLM-5.2) builds a world from the setting and settles three actions in a row;
+  its narration matches the engine's state file item by item
 - Reproducible: pass `seed` at world_init; every settlement seeds its RNG from the state's
   `rng_seed` + `rng_counter`, both persisted with the state.
 

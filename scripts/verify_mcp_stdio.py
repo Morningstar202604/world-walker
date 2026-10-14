@@ -119,6 +119,18 @@ async def main():
             check('tools/list 覆盖全部 13 个工具', names == EXPECTED_TOOLS,
                   '缺少: %s' % (EXPECTED_TOOLS - names) if names != EXPECTED_TOOLS else '')
             check('每个工具都有描述', all((t.description or '').strip() for t in tools.tools))
+            wi = next(t for t in tools.tools if t.name == 'world_init')
+            check('world_init 入参带字段级 schema（$defs）', bool((wi.input_schema or {}).get('$defs')),
+                  str(list((wi.input_schema or {}).get('$defs', {}))[:5]))
+
+            # 1b. prompt：客户端可当斜杠命令用，把「设定 → 开局指令」一键化
+            pr = await session.list_prompts()
+            check('prompts/list 含 new_game', 'new_game' in {p.name for p in pr.prompts},
+                  str(sorted(p.name for p in pr.prompts)))
+            got = await session.get_prompt('new_game', {'setting': '世界：测试世界。主角：阿甲。', 'seed': '5'})
+            ptext = got.messages[0].content.text
+            check('new_game 渲染出设定与 seed', '测试世界' in ptext and 'seed=5' in ptext,
+                  '%d 字符' % len(ptext))
 
             # 2. 未开局时的守卫
             r = await session.call_tool('tick', {})
