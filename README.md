@@ -26,11 +26,15 @@ pip install -e ".[mcp]"
 
 把设定丢给 Agent 即可开一局。支持 MCP prompt 的客户端还能一键开局：调 `new_game`（参数填设定），
 它会生成完整开局指令。流程是：`world_init`（按设定建世界，入参带字段级说明，含 seed）→
-玩家每个行动由 `combat` / `trade` / `social` / `karma` 结算 → `tick` 收回合 → 每 3-5 回合用
-`narrative` + `status` 检查涌现事件与心流；Agent 只负责把引擎返回的 JSON 转写成文学描写，
-不得编造数值（字段有其他疑问时用 `world_schema` 查完整结构）。
+玩家每个行动由 `combat` / `trade` / `social` / `karma` 结算 → `narration_context` 取触发的
+设定条目、在场角色的卡面文字与编年史 → 文学描写 → `tick` 收回合 → 每 3-5 回合用
+`narrative` + `status` 检查涌现事件与心流；Agent 只负责转写 JSON，不得编造数值。
 
-- 端到端自检：`python scripts/verify_mcp_stdio.py`（25 项断言，含「同种子 + 同行动 → 结果一致」）
+- 生态兼容（不重复造轮子）：直接吃酒馆（SillyTavern）生态的**角色卡**（`.png` 内嵌 / `.json`，
+  V1/V2/V3）与**世界书**（world-info / 卡内 `character_book`，含 selective/constant/disable 语义）；
+  `character_card_read` 看卡 → `add_character` 入局（卡面文字进叙事层）→ `import_lorebook` 并入设定
+- 回合可回退：`snapshot` / `restore`（引擎状态确定性，回退后重放同种子一致）
+- 端到端自检：`python scripts/verify_mcp_stdio.py`（34 项断言，含酒馆生态兼容与确定性）
 - 实测：opencode（GLM-5.2）接入后按设定建局、连续结算三个行动，叙事数值与引擎状态文件逐项一致
 - 可复现：开局带 `seed`；每次结算的随机数由状态里的 `rng_seed` 与 `rng_counter` 共同决定，并随状态落盘
 
@@ -67,11 +71,11 @@ python engine.py info_weight --state game_state.json --probability 0.05
 ```
 game_engine/                      # 仓库根即 game_engine 包（导入别名已放开，目录名任意）
 ├── engine.py                     # CLI 入口（14 条命令）
-├── mcp_server.py                 # MCP 服务器（13 个工具；除 mcp>=2 外无额外依赖）
+├── mcp_server.py                 # MCP 服务器（19 个工具；除 mcp>=2 外无额外依赖）
 ├── state_schema.py               # 状态结构 + 辅助函数
 ├── init_game.py                  # 生成示例世界（青云界）
 ├── pyproject.toml                # pip install -e ".[mcp]"；命令 world-walker / world-walker-mcp
-├── scripts/verify_mcp_stdio.py   # MCP 端到端自检（22 项断言）
+├── scripts/verify_mcp_stdio.py   # MCP 端到端自检（34 项断言）
 ├── demo_state.json               # 演示状态
 ├── GAME_MASTER_PROTOCOL.md       # AI Agent 调用协议
 └── rules/                        # 85+ 学术公式（Python 实现）

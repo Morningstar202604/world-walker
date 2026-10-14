@@ -107,7 +107,7 @@ class RelationIn(BaseModel):
 
 server = MCPServer(
     name="world-walker",
-    version="0.3.0",
+    version="0.4.0",
     instructions=(
         "万界·行者规则引擎：世界观无关的因果推演内核。主持文字互动游戏时："
         "先 world_schema 了解状态结构，按玩家设定调用 world_init 建世界；"
@@ -126,11 +126,15 @@ NEW_GAME_BRIEF = """你在主持一局文字互动游戏，数值结算必须全
 ## 回合流程
 - 开局：`world_init`（设定与状态文件路径见下）→ 写两三百字开场（可用 world_info.location_desc）。
 - 每个玩家行动：需要时 `read_state` 看现状 → 选对应工具结算（combat / trade / social / karma）
+  → `narration_context`（传当下场景文字，拿到触发的设定条目、在场角色的卡面文字与编年史）
   → 把返回 JSON 转写成文学描写。
 - 回合收尾：`tick`。
 - 每 3-5 回合：`narrative`（涌现事件与相位）与 `status`（心流/身份/道德/认知）各一次，
   把结果织进叙事节奏（例如心流偏低就安排一段缓冲剧情）。
 - 字段不清楚时先 `world_schema` 查（world_init 的入参 schema 已带字段说明，通常不必查）。
+- 有角色卡（酒馆生态的 .png/.json 卡）或世界书文件时：`character_card_read` 先看 → `add_character`
+  把人收进局（卡面文字会自动进叙事层）→ 设定类文件用 `import_lorebook` 并入。
+- 玩家想反悔/分叉剧情：`snapshot` 存点、`restore` 回退（引擎状态是确定性的，回退后重放同种子一致）。
 
 ## 本次设定
 {setting}
@@ -156,6 +160,122 @@ SOCIAL_EVENTS = ("help", "harm", "threaten", "intimidate", "gift", "betray",
                  "cooperate", "insult", "praise", "murder")
 KARMA_TYPES = ("murder_innocent", "murder_evil", "theft", "lie", "betray",
                "help_innocent", "help_evil", "repay_debt", "oath_broken")
+
+
+
+# ────────────────────────── 角色卡与世界书（复用酒馆生态格式）──────────────────────────
+# 支持: 角色卡 V1/V2/V3（.json 或 .png 内嵌 tEXt: chara/ccv3）与
+#       SillyTavern world-info（{"entries": {...}}）两套字段名。
+_CARD_PNG_KEYS = ("chara", "ccv3")
+
+
+def _read_png_card(path):
+    """从 PNG 的 tEXt/iTXt 块里取嵌卡（base64 JSON）。"""
+    import base64, struct
+    data = open(path, "rb").read()
+    if data[:8] != b"\x89PNG\r\n\x1a\n":
+        return None
+    pos = 8
+    while pos + 8 <= len(data):
+        (length,) = struct.unpack(">I", data[pos:pos + 4])
+        ctype = data[pos + 4:pos + 8]
+        chunk = data[pos + 8:pos + 8 + length]
+        if ctype in (b"tEXt", b"iTXt"):
+            key, _, value = chunk.partition(b"\x00")
+            if key.decode("latin-1", "ignore").strip() in _CARD_PNG_KEYS:
+                try:
+                    return json.loads(base64.b64decode(value.strip()).decode("utf-8"))
+                except Exception:
+                    pass
+        pos += 12 + length
+    return None
+
+
+def _load_card(path):
+    """读角色卡并返回 data 段（V1 平铺 / V2、V3 的 data 均可）。"""
+    if path.lower().endswith(".png"):
+        raw = _read_png_card(path)
+        if raw is None:
+            raise ValueError("PNG 里没有嵌卡（tEXt 关键字 chara/ccv3）: %s" % path)
+    else:
+        raw = json.load(open(path, encoding="utf-8"))
+    nested = isinstance(raw, dict) and isinstance(raw.get("data"), dict)
+    data = raw["data"] if nested else raw
+    if not isinstance(data, dict) or not data.get("name"):
+        raise ValueError("不是可识别的角色卡（缺 name）: %s" % path)
+    spec = (raw.get("spec_version") or raw.get("spec")) if nested else "v1"
+    return data, (spec or "unknown")
+
+
+def _normalize_lore_entry(e):
+    """规范化世界书条目；同时吃角色卡 character_book 与 ST world-info 两套字段名。"""
+    if not isinstance(e, dict):
+        return None
+    keys = e.get("keys", e.get("key")) or []
+    if isinstance(keys, str):
+        keys = [keys]
+    sec = e.get("secondary_keys", e.get("keysecondary")) or []
+    if isinstance(sec, str):
+        sec = [sec]
+    content = str(e.get("content") or "").strip()
+    keys = [str(k).strip() for k in keys if str(k).strip()]
+    if not keys or not content:
+        return None
+    if "enabled" in e:
+        enabled = bool(e["enabled"])
+    else:
+        enabled = not bool(e.get("disable", False))
+    return {
+        "keys": keys,
+        "secondary_keys": [str(k).strip() for k in sec if str(k).strip()],
+        "content": content,
+        "comment": str(e.get("comment") or e.get("name") or ""),
+        "selective": bool(e.get("selective", False)),
+        "constant": bool(e.get("constant", False)),
+        "case_sensitive": bool(e.get("case_sensitive", False)),
+        "order": int(e.get("insertion_order", e.get("order", 100)) or 0),
+        "enabled": enabled,
+    }
+
+
+def _load_lorebook(path):
+    """读世界书文件；支持 ST world-info 与角色卡自带 book。"""
+    d = json.load(open(path, encoding="utf-8"))
+    if isinstance(d, dict) and isinstance(d.get("data"), dict):
+        d = d["data"]
+    entries = None
+    if isinstance(d, dict):
+        if isinstance(d.get("character_book"), dict):
+            entries = d["character_book"].get("entries")
+        elif isinstance(d.get("entries"), (list, dict)):
+            entries = d["entries"]
+    elif isinstance(d, list):
+        entries = d
+    if isinstance(entries, dict):
+        entries = list(entries.values())
+    if not isinstance(entries, list):
+        raise ValueError("不是可识别的世界书（缺 entries）: %s" % path)
+    return [n for n in (_normalize_lore_entry(e) for e in entries) if n]
+
+
+def _trigger_lore(lore, text):
+    """关键词触发（与酒馆同语义）：主键命中；selective 时副键也要命中；constant 常驻。"""
+    low = text.lower()
+
+    def hit(e, k):
+        return (k in text) if e.get("case_sensitive") else (k.lower() in low)
+
+    hits = []
+    for e in lore:
+        if not e.get("enabled"):
+            continue
+        if e.get("constant") or any(hit(e, k) for k in e.get("keys", [])):
+            if e.get("selective") and e.get("secondary_keys") and not any(
+                    hit(e, k) for k in e["secondary_keys"]):
+                continue
+            hits.append(e)
+    hits.sort(key=lambda x: x.get("order", 100))
+    return hits
 
 
 def _state_path() -> str:
@@ -224,6 +344,9 @@ def _normalize_entity(entity_id: str, raw: dict) -> dict:
         "gold": int(raw.get("gold", 0)),
         "location": str(raw.get("location", "")),
     }
+    for extra in ("desc", "personality", "speech"):
+        if raw.get(extra):
+            ent[extra] = str(raw[extra])[:1200]
     if raw.get("skills"):
         ent["skills"] = list(raw["skills"])
     if raw.get("morality"):
@@ -259,7 +382,12 @@ def world_schema() -> dict:
             "location": "所在地（需与 market 的 location 键一致才可交易）",
             "skills": "技能名数组（可选）",
             "morality": "六维道德向量（可选，默认 [0,0,0,0,0,0]）",
+            "desc": "角色外观/背景文字（可选；add_character 从角色卡带入）",
+            "personality": "性格文字（可选）",
+            "speech": "口癖/语气示例（可选，来自卡的 mes_example）",
         },
+        "lore": "世界书条目数组（keys/secondary_keys/content/selective/constant/order/enabled）；"
+                "由 import_lorebook 或角色卡的 character_book 带入， narration_context 按关键词触发",
         "market_item_shape": {
             "name": "显示名（如 '安神丹'）", "price": "当前价", "supply": "库存",
             "base_price": "基准价（价格会回归它）", "type": "类别", "desc": "描述",
@@ -284,6 +412,12 @@ def world_schema() -> dict:
             "status": "心流/身份/相位/道德/认知 聚合（每 3-5 回合查一次）",
             "merit": "功德值（纯函数：aid 救助 0~1, sincerity 诚心 0~1）",
             "narrative_weight": "事件叙事权重 = -log P(事件)（纯函数）",
+            "narration_context": "叙事上下文包：触发设定 + 在场角色卡面 + 编年史（每回合调）",
+            "character_card_read": "读角色卡（.png/.json，V1/V2/V3）",
+            "add_character": "角色卡入局当 NPC（卡面进叙事层，卡内世界书并入）",
+            "import_lorebook": "导入 SillyTavern world-info 世界书",
+            "snapshot": "存快照（回退/分叉用）",
+            "restore": "从快照恢复",
         },
     }
 
@@ -527,6 +661,120 @@ def narrative_weight(probability: float) -> dict:
     if not (0.0 < probability <= 1.0):
         raise ValueError("probability 必须在 (0, 1] 区间")
     return {"info_weight": event_information(float(probability))}
+
+
+
+@server.tool()
+def character_card_read(path: str) -> dict:
+    """读一张角色卡并返回要点（Chinese: .png 嵌卡或 .json，V1/V2/V3；不改状态，先看再决定要不要入局）。
+    Inspect a SillyTavern-style character card (PNG or JSON)."""
+    d, spec = _load_card(path)
+    book = (d.get("character_book") or {}).get("entries") or []
+    if isinstance(book, dict):
+        book = list(book.values())
+    return {
+        "name": d.get("name"),
+        "spec": spec,
+        "description": (d.get("description") or "")[:600],
+        "personality": (d.get("personality") or "")[:300],
+        "scenario": (d.get("scenario") or "")[:300],
+        "first_mes": (d.get("first_mes") or "")[:300],
+        "tags": d.get("tags") or [],
+        "creator": d.get("creator") or "",
+        "book_entries": len(book),
+    }
+
+
+@server.tool()
+def add_character(path: str, entity_id: str, attrs: dict[str, int] | None = None,
+                  hp: int = 100, gold: int = 0, location: str = "", level: str = "凡人") -> dict:
+    """把角色卡作为 NPC 加进当前对局（Chinese: 卡面文字进叙事层，卡内世界书并入状态）。
+    Add a character card to the active game as an NPC."""
+    state = _load()
+    d, _spec = _load_card(path)
+    if entity_id in state.get("entities", {}):
+        raise ValueError("实体已存在: %s（换个 entity_id 或先 remove）" % entity_id)
+    ent = _normalize_entity(entity_id, {
+        "name": d.get("name"), "attrs": attrs or {}, "hp": hp, "hp_max": hp,
+        "gold": gold, "location": location or state.get("entities", {}).get("player", {}).get("location", ""),
+        "level": level,
+        "desc": d.get("description") or "",
+        "personality": d.get("personality") or "",
+        "speech": d.get("mes_example") or "",
+    })
+    state.setdefault("entities", {})[entity_id] = ent
+    book = (d.get("character_book") or {}).get("entries") or []
+    if isinstance(book, dict):
+        book = list(book.values())
+    added = 0
+    for e in book:
+        n = _normalize_lore_entry(e)
+        if n:
+            state.setdefault("lore", []).append(n)
+            added += 1
+    log_event(state, "system", "角色卡「%s」入局（%s），世界书 +%d 条" % (ent["name"], entity_id, added))
+    return _finish(state, {"entity_id": entity_id, "name": ent["name"], "lore_added": added,
+                           "entities": len(state["entities"])})
+
+
+@server.tool()
+def import_lorebook(path: str) -> dict:
+    """导入世界书文件（Chinese: SillyTavern world-info JSON 或角色卡自带 book），并入当前对局。
+    Import a world-info style lorebook into the active game."""
+    state = _load()
+    entries = _load_lorebook(path)
+    state.setdefault("lore", []).extend(entries)
+    log_event(state, "system", "导入世界书 %d 条" % len(entries))
+    return _finish(state, {"imported": len(entries), "total": len(state["lore"])})
+
+
+@server.tool()
+def narration_context(scene_text: str = "", recent: int = 12) -> dict:
+    """叙事上下文包：关键词触发的设定条目 + 在场角色的卡面文字 + 自动编年史（Chinese: 每回合都调一次，把这些织进描写）。
+    Narration kit: triggered lore, on-scene cast (card prose), deterministic chronicle."""
+    state = _load()
+    player = state.get("entities", {}).get("player", {})
+    text = scene_text or " ".join(
+        [player.get("location", "")] + [e.get("name", "") for e in state.get("entities", {}).values()])
+    lore = _trigger_lore(state.get("lore", []), text)
+    loc = player.get("location", "")
+    present = [{"id": k, "name": e.get("name"), "desc": e.get("desc", ""),
+                "personality": e.get("personality", ""), "speech": e.get("speech", "")}
+               for k, e in state.get("entities", {}).items()
+               if k != "player" and (not loc or e.get("location") == loc)]
+    return {
+        "triggered_lore": [{"comment": e["comment"], "content": e["content"]} for e in lore[:12]],
+        "lore_total": len(state.get("lore", [])),
+        "present_cast": present[:8],
+        "chronicle": [e.get("desc") for e in state.get("event_log", [])[-int(recent):] if e.get("desc")],
+        "flags": state.get("world_flags", []),
+        "unsettled_karma": sum(e["amount"] for e in state.get("karma_ledger", [])
+                               if e["from"] == "player" and not e["settled"]),
+    }
+
+
+@server.tool()
+def snapshot(label: str = "") -> dict:
+    """把当前状态存一个快照（Chinese: 回退/分叉剧情用；状态本身确定性，所以回退是干净的）。
+    Save a state snapshot (for undo / branching)."""
+    import shutil, time
+    src = _state_path()
+    suffix = (".%s" % label) if label else (".%d" % int(time.time()))
+    dst = src + ".snap" + suffix
+    shutil.copyfile(src, dst)
+    return {"snapshot": dst, "tick": load_state(src).get("tick", 0)}
+
+
+@server.tool()
+def restore(snapshot_path: str) -> dict:
+    """从快照恢复状态（Chinese: 回退到某个存档点）。Restore state from a snapshot."""
+    import shutil
+    if not os.path.exists(snapshot_path):
+        raise ValueError("快照不存在: %s" % snapshot_path)
+    state = load_state(snapshot_path)
+    save_state(state, _state_path())
+    return {"restored": snapshot_path, "tick": state.get("tick", 0),
+            "entities": sorted(state.get("entities", {}))}
 
 
 def main() -> None:

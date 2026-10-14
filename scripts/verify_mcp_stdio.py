@@ -31,6 +31,8 @@ SERVER = os.path.join(ROOT, 'mcp_server.py')
 EXPECTED_TOOLS = {
     'world_schema', 'world_init', 'world_open', 'read_state', 'combat', 'trade',
     'social', 'karma', 'tick', 'narrative', 'status', 'merit', 'narrative_weight',
+    'narration_context', 'character_card_read', 'add_character', 'import_lorebook',
+    'snapshot', 'restore',
 }
 
 RESULTS = []
@@ -235,6 +237,99 @@ async def main():
                                                              'action_type': 'attack'}))
                 outs.add((cr.get('hit'), cr.get('damage'), cr.get('crit')))
             check('不同种子给出不同战斗结果（随机数确实生效）', len(outs) >= 2, '%d 种结果' % len(outs))
+
+    # 14. 酒馆生态兼容：PNG 嵌卡 → NPC、world-info 世界书、叙事上下文
+    import base64, struct, zlib
+
+    def png_chunk(ctype, payload):
+        return (struct.pack('>I', len(payload)) + ctype + payload
+                + struct.pack('>I', zlib.crc32(ctype + payload) & 0xffffffff))
+
+    card = {
+        'spec': 'chara_card_v2', 'spec_version': '2.0',
+        'data': {
+            'name': '白露',
+            'description': '白发药师的学徒，随身带着一只旧药箱。',
+            'personality': '话少、谨慎、心软。',
+            'first_mes': '「……你受伤了。」她放下药箱。',
+            'mes_example': '「别动。」/「药苦，忍着。」',
+            'tags': ['药师', '寡言'], 'creator': 'verify-script',
+            'character_book': {'entries': [
+                {'keys': ['药箱', '药'], 'content': '白露的旧药箱是师父遗物，夹层里藏着一封没写完的信。',
+                 'insertion_order': 10, 'enabled': True, 'comment': '药箱'},
+                {'keys': ['渡口'], 'secondary_keys': ['雨'], 'selective': True,
+                 'content': '渡口的雨夜里，船夫们会在茶棚后烤火。', 'insertion_order': 20,
+                 'enabled': True, 'comment': '雨夜渡口'},
+                {'keys': ['不会被触发'], 'content': '这条不该出现。', 'enabled': True, 'comment': '干扰项'},
+                {'keys': ['节奏'], 'content': '常驻：秋雨、慢节奏、旧账。', 'constant': True,
+                 'enabled': True, 'comment': '基调'},
+            ]},
+        },
+    }
+    card_png = os.path.join(tmp, 'bailu.png')
+    with open(card_png, 'wb') as f:
+        f.write(b'\x89PNG\r\n\x1a\n')
+        f.write(png_chunk(b'IHDR', struct.pack('>IIBBBBB', 1, 1, 8, 6, 0, 0, 0)))
+        f.write(png_chunk(b'IDAT', zlib.compress(b'\x00\x00\x00\x00\x00')))
+        f.write(png_chunk(b'tEXt', b'chara\x00'
+                          + base64.b64encode(json.dumps(card, ensure_ascii=False).encode('utf-8'))))
+        f.write(png_chunk(b'IEND', b''))
+
+    wi = {'entries': {
+        '0': {'uid': 0, 'key': ['镖局'], 'keysecondary': [], 'comment': '镖局',
+              'content': '临江渡口归「镇远镖局」管，总镖头姓沈。', 'disable': False, 'order': 50},
+        '1': {'uid': 1, 'key': ['规矩'], 'comment': '规矩',
+              'content': '渡口规矩：先付钱后上船。', 'disable': True, 'order': 60},
+    }}
+    wi_path = os.path.join(tmp, 'worldinfo.json')
+    with open(wi_path, 'w', encoding='utf-8') as f:
+        json.dump(wi, f, ensure_ascii=False)
+
+    eco_state = os.path.join(tmp, 'ecosys.save.json')
+
+    async with stdio_client(params) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            await session.call_tool('world_init', dict(SETTING, state_path=eco_state, seed=11))
+            cr = data(await session.call_tool('character_card_read', {'path': card_png}))
+            check('角色卡读取（PNG 内嵌 V2 卡）',
+                  cr.get('name') == '白露' and cr.get('book_entries') == 4, str(cr.get('spec')))
+            ac = data(await session.call_tool('add_character', {'path': card_png,
+                                                               'entity_id': 'bailu',
+                                                               'location': '临江茶棚'}))
+            check('角色卡入局为 NPC 并并入卡内世界书', ac.get('lore_added') == 4, str(ac))
+            st = data(await session.call_tool('read_state', {}))
+            check('卡面文字进入叙事层（desc/personality/speech）',
+                  '药箱' in st['entities']['bailu'].get('desc', '')
+                  and bool(st['entities']['bailu'].get('personality')))
+            il = data(await session.call_tool('import_lorebook', {'path': wi_path}))
+            check('导入 SillyTavern world-info（含 disable 字段）',
+                  il.get('imported') == 2 and il.get('total') == 6, str(il))
+
+            nc1 = data(await session.call_tool('narration_context', {'scene_text': '她打开药箱取药'}))
+            blob1 = ' '.join(x['comment'] + x['content'] for x in nc1['triggered_lore'])
+            check('关键词触发：命中主键 + 常驻，排除无关条目',
+                  '药箱' in blob1 and '基调' in blob1 and '干扰项' not in blob1,
+                  '%d 条触发' % len(nc1['triggered_lore']))
+            nc2 = data(await session.call_tool('narration_context', {'scene_text': '渡口的雨很大'}))
+            nc3 = data(await session.call_tool('narration_context', {'scene_text': '渡口很干'}))
+            has = lambda nc, s: any(s in x['content'] for x in nc['triggered_lore'])
+            check('selective 语义：需主键+副键同中', has(nc2, '烤火') and not has(nc3, '烤火'))
+            nc4 = data(await session.call_tool('narration_context', {'scene_text': '镖局的规矩'}))
+            check('disable 条目不触发；ST 键名（key/keysecondary）生效',
+                  has(nc4, '镇远镖局') and not has(nc4, '先付钱后上船'))
+            check('叙事包带在场角色卡面与编年史',
+                  bool(nc4['present_cast']) and bool(nc4['chronicle']),
+                  'cast=%d chronicle=%d' % (len(nc4['present_cast']), len(nc4['chronicle'])))
+
+            # 15. 快照 / 回退（确定性）
+            snap = data(await session.call_tool('snapshot', {'label': 'before'}))
+            await session.call_tool('tick', {})
+            after = data(await session.call_tool('read_state', {}))['tick']
+            rs = data(await session.call_tool('restore', {'snapshot_path': snap['snapshot']}))
+            check('快照/回退：状态回到存档点',
+                  after == rs['tick'] + 1 and 'bailu' in rs.get('entities', []),
+                  'tick %s -> %s' % (rs['tick'], after))
 
     # 14. CLI 冒烟（验证导入别名让任意目录名都能跑）
     cli = subprocess.run([sys.executable, os.path.join(ROOT, 'engine.py'),

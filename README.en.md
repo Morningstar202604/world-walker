@@ -27,11 +27,16 @@ Add to your MCP client (Claude Code / Codex / Cursor / any MCP-capable agent):
 Hand your setting bible to the agent and play. Clients with MCP prompt support can start in one step:
 call `new_game` (pass the setting) and it produces the full opening brief. The loop is:
 `world_init` (build the world from the setting; typed args with field docs; takes a seed) →
-each player action is settled by `combat` / `trade` / `social` / `karma` → `tick` closes the turn →
-every 3-5 turns call `narrative` + `status` for emergent events and flow state. The agent only turns
-the engine's JSON into prose — it must never invent numbers (use `world_schema` if anything is unclear).
+each player action is settled by `combat` / `trade` / `social` / `karma` →
+`narration_context` returns the triggered lore, the on-scene cast's card prose and a chronicle →
+prose → `tick` closes the turn → every 3-5 turns call `narrative` + `status`. The agent only turns
+the engine's JSON into prose — it must never invent numbers.
 
-- End-to-end self-check: `python scripts/verify_mcp_stdio.py` (25 assertions, including
+- Ecosystem compatible (no reinventing): reads SillyTavern-style **character cards** (`.png`-embedded
+  or `.json`, V1/V2/V3) and **world info** lorebooks (world-info / card `character_book`, with
+  selective/constant/disable semantics); `character_card_read` → `add_character` → `import_lorebook`
+- Deterministic undo: `snapshot` / `restore`
+- End-to-end self-check: `python scripts/verify_mcp_stdio.py` (34 assertions, including
   "same seed + same action → identical result")
 - Field-tested: opencode (GLM-5.2) builds a world from the setting and settles three actions in a row;
   its narration matches the engine's state file item by item
@@ -71,11 +76,11 @@ python engine.py info_weight --state game_state.json --probability 0.05
 ```
 game_engine/                      # the repo root IS the game_engine package (any folder name works)
 ├── engine.py                     # CLI entry (14 commands)
-├── mcp_server.py                 # MCP server (13 tools; only extra dep is mcp>=2)
+├── mcp_server.py                 # MCP server (19 tools; only extra dep is mcp>=2)
 ├── state_schema.py               # State schema + helpers
 ├── init_game.py                  # Writes the sample world (青云界)
 ├── pyproject.toml                # pip install -e ".[mcp]"; commands world-walker / world-walker-mcp
-├── scripts/verify_mcp_stdio.py   # MCP end-to-end self-check (22 assertions)
+├── scripts/verify_mcp_stdio.py   # MCP end-to-end self-check (34 assertions)
 ├── demo_state.json               # Demo game state
 ├── GAME_MASTER_PROTOCOL.md       # AI Agent call protocol
 └── rules/                        # 85+ academic formulas as Python

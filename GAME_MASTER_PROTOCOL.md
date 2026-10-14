@@ -3,9 +3,11 @@
 > 核心原则:**所有确定性计算交给引擎,Agent 只负责文学叙事**。
 
 > **MCP 模式**：宿主是 MCP 客户端（Claude Code / Codex / Cursor 等）时，用 `mcp_server.py`
-> 暴露的 13 个工具，语义与本文命令一一对应：`cognition`/`flow`/`identity`/`panarchy`/
+> 暴露的 19 个工具，语义与本文命令一一对应：`cognition`/`flow`/`identity`/`panarchy`/
 > `moral_update` 合并为 `status`，`info_weight` 改名为 `narrative_weight`，`world_state`
-> 改名为 `read_state`；另增建局三件套 `world_schema` / `world_init` / `world_open`。
+> 改名为 `read_state`；另增建局三件套 `world_schema` / `world_init` / `world_open`、
+> 叙事层 `narration_context`（关键词触发设定 + 在场角色卡面 + 编年史，每回合调）、
+> 酒馆生态 `character_card_read` / `add_character` / `import_lorebook`、回退 `snapshot` / `restore`。
 > 一键开局：调 `new_game` prompt（参数填设定），产出「协议 + 设定 + 状态文件」的完整开局指令。
 > 安装 `pip install -e ".[mcp]"` 后，客户端命令填 `world-walker-mcp`。
 
