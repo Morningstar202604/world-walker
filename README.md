@@ -18,7 +18,8 @@
 pip install -e ".[mcp]"
 ```
 
-在 MCP 客户端（Claude Code / Codex / Cursor / 任意支持 MCP 的 Agent）配置里加：
+在 MCP 客户端（Claude Code / Codex / Cursor / 任意支持 MCP 的 Agent）配置里加
+（**本仓已带项目级 `opencode.json`，在仓库目录里 opencode 会自动接上**）：
 
 ```json
 { "mcpServers": { "world-walker": { "command": "world-walker-mcp" } } }
