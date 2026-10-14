@@ -47,6 +47,7 @@ def resolve_trade(state, location_id, item, quantity, is_buyer, entity_id):
         "events": ["玩家购买回灵丹×2，花费100灵石"]
     }
     """
+    cur = state.get("currency", "灵石")   # 世界观无关：货币名由状态给出（玄晶/灵石/信用点…）
     loc_market = state.get("market", {}).get(location_id)
     result = {
         "success": False,
@@ -86,7 +87,7 @@ def resolve_trade(state, location_id, item, quantity, is_buyer, entity_id):
         total = price * quantity
         
         if ent.get("gold", 0) < total:
-            result["events"].append(f"灵石不足(需要{total}，只有{ent.get('gold', 0)})")
+            result["events"].append(f"{cur}不足(需要{total}，只有{ent.get('gold', 0)})")
             return result
         
         # 执行交易
@@ -101,7 +102,7 @@ def resolve_trade(state, location_id, item, quantity, is_buyer, entity_id):
         result["price_after"] = item_data["price"]
         result["supply_after"] = item_data["supply"]
         result["events"].append(
-            f"{ent['name']}购买{item}×{quantity}，花费{total}灵石"
+            f"{ent['name']}购买{item}×{quantity}，花费{total}{cur}"
         )
         
         # 大宗交易影响关系 (坊主印象)
@@ -125,7 +126,7 @@ def resolve_trade(state, location_id, item, quantity, is_buyer, entity_id):
         result["price_after"] = item_data["price"]
         result["supply_after"] = item_data["supply"]
         result["events"].append(
-            f"{ent['name']}出售{item}×{quantity}，获得{total}灵石"
+            f"{ent['name']}出售{item}×{quantity}，获得{total}{cur}"
         )
     
     return result

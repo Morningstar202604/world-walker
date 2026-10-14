@@ -1,0 +1,34 @@
+# 设定包（settings/）
+
+一个「设定包」= 一局游戏的全部开局素材，一个 JSON 文件就够。MCP 里一句话开局：
+
+```
+load_setting(path="settings/玄枢界.setting.json")     # 世界 + 人物 + 市场 + 关系 + 世界书，一次到位
+```
+
+载入后建议紧接着 `open_panel`，给玩家一块可一直看的实况面板。
+
+## 格式
+
+| 字段 | 必填 | 说明 |
+|---|---|---|
+| `world` | ✓ | `{name, era, location_desc}` |
+| `player` | ✓ | 实体形状（见 `world_schema` 工具的 entity_shape） |
+| `entities` | | NPC 数组，每项要有 `id`；可带 `desc` / `personality` / `speech`（叙事层文字） |
+| `market` | | `[{location, items:[{key, name, price, supply, base_price, type, desc}]}]` |
+| `relations` | | `[{a, b, affinity, respect}]`（键序由引擎生成） |
+| `world_flags` | | 字符串数组（世界状态标记） |
+| `currency` | | 货币名（默认「灵石」；示例设定用「玄晶」，交易文案会跟着变） |
+| `lore` | | 世界书条目，**与酒馆 character_book 同形**：`keys` / `secondary_keys` / `selective` / `constant` / `insertion_order` / `content` / `comment`。`narration_context` 按关键词触发它们 |
+| `seed` | | 随机种子（可复现） |
+| `state_path_hint` | | 默认状态文件名 |
+
+## 已有设定
+
+- `玄枢界.setting.json` —— 东方玄幻示例：修行十阶（淬体→登枢）、玄晶经济、五方势力、**九类事件推进范式**（入学试炼 / 秘境名额 / 拍卖暗斗 / 追杀赌斗 / 渡厄突破 / 墟界长线）。
+
+## 版权与原创性
+
+框架层——长阶梯修炼体系、资源与品阶、势力交错、事件推进节奏——属于类型文学的**公共范式**，可以自由借鉴；
+本仓的示例设定里，人物、势力、地名、物名**全部原创**，没有复用任何已有作品的名词。
+往这里加新设定时请守住同一条线：**借结构，不搬名字**。

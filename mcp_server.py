@@ -107,7 +107,7 @@ class RelationIn(BaseModel):
 
 server = MCPServer(
     name="world-walker",
-    version="0.5.0",
+    version="0.6.0",
     instructions=(
         "万界·行者规则引擎：世界观无关的因果推演内核。主持文字互动游戏时："
         "先 world_schema 了解状态结构，按玩家设定调用 world_init 建世界；"
@@ -133,6 +133,7 @@ NEW_GAME_BRIEF = """你在主持一局文字互动游戏，数值结算必须全
 - 每 3-5 回合：`narrative`（涌现事件与相位）与 `status`（心流/身份/道德/认知）各一次，
   把结果织进叙事节奏（例如心流偏低就安排一段缓冲剧情）。
 - 字段不清楚时先 `world_schema` 查（world_init 的入参 schema 已带字段说明，通常不必查）。
+- 仓库自带设定包时可直接 `load_setting(path=...)` 一键开局（如 `settings/玄枢界.setting.json`）。
 - 有角色卡（酒馆生态的 .png/.json 卡）或世界书文件时：`character_card_read` 先看 → `add_character`
   把人收进局（卡面文字会自动进叙事层）→ 设定类文件用 `import_lorebook` 并入。
 - 玩家想反悔/分叉剧情：`snapshot` 存点、`restore` 回退（引擎状态是确定性的，回退后重放同种子一致）。
@@ -415,6 +416,7 @@ def world_schema() -> dict:
         "lore": "世界书条目数组（keys/secondary_keys/content/selective/constant/order/enabled）；"
                 "由 import_lorebook 或角色卡的 character_book 带入， narration_context 按关键词触发",
         "codex": "探索图鉴 {locations, people, items, lore}——引擎自动记录，open_panel 的面板会渲染它",
+        "currency": "货币名（默认「灵石」；设定包里给 currency=「玄晶」即全局生效）",
         "market_item_shape": {
             "name": "显示名（如 '安神丹'）", "price": "当前价", "supply": "库存",
             "base_price": "基准价（价格会回归它）", "type": "类别", "desc": "描述",
@@ -447,6 +449,7 @@ def world_schema() -> dict:
             "restore": "从快照恢复",
             "travel": "移动（唯一能改玩家 location 的工具；首次到达记图鉴）",
             "open_panel": "打开实况面板（只读网页，自动刷新）",
+            "load_setting": "从设定包一键开一局（settings/*.setting.json）",
         },
     }
 
@@ -512,6 +515,7 @@ def world_init(state_path: str, world: WorldInfo, player: EntityIn,
     log_event(state, "system", "世界「%s」开局：%s" % (state["world_info"]["name"],
                                                   state["world_info"]["location_desc"] or "旅程开始"))
 
+    _remember(state, "locations", state_entities["player"].get("location", ""))
     _active["path"] = os.path.abspath(state_path)
     save_state(state, _active["path"])
     return {
@@ -788,6 +792,42 @@ def narration_context(scene_text: str = "", recent: int = 12) -> dict:
         "unsettled_karma": sum(e["amount"] for e in state.get("karma_ledger", [])
                                if e["from"] == "player" and not e["settled"]),
     })
+
+
+@server.tool()
+def load_setting(path: str, state_path: str = "", seed: int | None = None) -> dict:
+    """从「设定包」一键开一局（Chinese: 包里含 world/player/entities/market/relations/lore，
+    示例见 settings/玄枢界.setting.json，格式见 settings/README.md）。
+    Boot a full game from a setting bundle in one call."""
+    b = json.load(open(path, encoding="utf-8"))
+    if not isinstance(b, dict) or "world" not in b or "player" not in b:
+        raise ValueError("不是合法的设定包（缺 world/player）: %s" % path)
+    sp = state_path or b.get("state_path_hint") or "ww_state.json"
+    res = world_init(state_path=sp,
+                     world=WorldInfo(**b["world"]),
+                     player=EntityIn(**b["player"]),
+                     entities=[EntityIn(**e) for e in b.get("entities", [])],
+                     market=[MarketIn(**m) for m in b.get("market", [])],
+                     relations=[RelationIn(**r) for r in b.get("relations", [])],
+                     world_flags=list(b.get("world_flags", [])),
+                     seed=int(seed if seed is not None else b.get("seed", 20261014)))
+    if b.get("currency"):
+        state = _load()
+        state["currency"] = str(b["currency"])
+        _finish(state, {})
+    lore_n = 0
+    if b.get("lore"):
+        state = _load()
+        for e in b["lore"]:
+            n = _normalize_lore_entry(e)
+            if n:
+                state.setdefault("lore", []).append(n)
+                lore_n += 1
+        log_event(state, "system", "设定包「%s」载入：世界书 %d 条" % (b.get("name", ""), lore_n))
+        _finish(state, {})
+    return {**res, "setting": b.get("name", ""), "lore_entries": lore_n,
+            "player_level": (b.get("player") or {}).get("level", ""),
+            "hint": "开局前可先 open_panel 把实况面板给玩家；行动用 combat/trade/social/karma 结算，移动用 travel。"}
 
 
 @server.tool()

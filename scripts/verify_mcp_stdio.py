@@ -32,7 +32,7 @@ EXPECTED_TOOLS = {
     'world_schema', 'world_init', 'world_open', 'read_state', 'combat', 'trade',
     'social', 'karma', 'tick', 'narrative', 'status', 'merit', 'narrative_weight',
     'narration_context', 'character_card_read', 'add_character', 'import_lorebook',
-    'snapshot', 'restore', 'travel', 'open_panel',
+    'snapshot', 'restore', 'travel', 'open_panel', 'load_setting',
 }
 
 RESULTS = []
@@ -331,15 +331,33 @@ async def main():
                   after == rs['tick'] + 1 and 'bailu' in rs.get('entities', []),
                   'tick %s -> %s' % (rs['tick'], after))
 
+            # 17. 设定包一键开局（仓库自带的玄枢界）
+            sp = os.path.join(ROOT, 'settings', '玄枢界.setting.json')
+            await session.call_tool('load_setting', {'path': sp,
+                                                     'state_path': os.path.join(tmp, 'xs.save.json'),
+                                                     'seed': 5})
+            st = data(await session.call_tool('read_state', {}))
+            check('设定包一键开局：世界/人物/世界书全部落地',
+                  st['world_info']['name'] == '玄枢界' and len(st['entities']) == 6
+                  and len(st.get('lore', [])) == 16,
+                  '%s · 实体 %d · 词条 %d' % (st['world_info']['name'], len(st['entities']),
+                                             len(st.get('lore', []))))
+            nc = data(await session.call_tool('narration_context',
+                                              {'scene_text': '旧枢台夜里透出光，试炼名额被人买断'}))
+            blob = ' '.join(x['comment'] for x in nc['triggered_lore'])
+            check('设定包世界书按关键词触发（含常驻基调与事件范式）',
+                  '基调' in blob and '枢台' in blob and '事件范式 · 入学试炼与大比' in blob,
+                  '触发 %d 条' % len(nc['triggered_lore']))
+
             # 16. 移动 + 探索图鉴 + 实况面板
             panel_state = os.path.join(tmp, 'panel.save.json')
             await session.call_tool('world_init', dict(SETTING, state_path=panel_state, seed=3))
-            t1 = data(await session.call_tool('travel', {'location': '临江茶棚'}))
+            t1 = data(await session.call_tool('travel', {'location': '后山古道', 'note': '雨里上山'}))
             t2 = data(await session.call_tool('travel', {'location': '临江茶棚'}))
-            check('travel 改位置；首次到达才标记"初次探索"',
+            t3 = data(await session.call_tool('travel', {'location': '后山古道'}))
+            check('travel 改位置；首次到达才算"初次探索"（开局地点已在图鉴）',
                   t1.get('first_time') is True and t2.get('first_time') is False
-                  and t1.get('location') == '临江茶棚', str(t1))
-            await session.call_tool('travel', {'location': '后山古道', 'note': '雨里上山'})
+                  and t3.get('first_time') is False and t1.get('location') == '后山古道', str(t1))
             await session.call_tool('trade', {'location': '临江茶棚', 'item': 'chun_cha',
                                               'direction': 'buy'})
             await session.call_tool('social', {'actor': 'player', 'target': 'vendor',
