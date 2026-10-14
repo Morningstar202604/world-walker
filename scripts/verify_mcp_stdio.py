@@ -32,7 +32,7 @@ EXPECTED_TOOLS = {
     'world_schema', 'world_init', 'world_open', 'read_state', 'combat', 'trade',
     'social', 'karma', 'tick', 'narrative', 'status', 'merit', 'narrative_weight',
     'narration_context', 'character_card_read', 'add_character', 'import_lorebook',
-    'snapshot', 'restore',
+    'snapshot', 'restore', 'travel', 'open_panel',
 }
 
 RESULTS = []
@@ -330,6 +330,45 @@ async def main():
             check('快照/回退：状态回到存档点',
                   after == rs['tick'] + 1 and 'bailu' in rs.get('entities', []),
                   'tick %s -> %s' % (rs['tick'], after))
+
+            # 16. 移动 + 探索图鉴 + 实况面板
+            panel_state = os.path.join(tmp, 'panel.save.json')
+            await session.call_tool('world_init', dict(SETTING, state_path=panel_state, seed=3))
+            t1 = data(await session.call_tool('travel', {'location': '临江茶棚'}))
+            t2 = data(await session.call_tool('travel', {'location': '临江茶棚'}))
+            check('travel 改位置；首次到达才标记"初次探索"',
+                  t1.get('first_time') is True and t2.get('first_time') is False
+                  and t1.get('location') == '临江茶棚', str(t1))
+            await session.call_tool('travel', {'location': '后山古道', 'note': '雨里上山'})
+            await session.call_tool('trade', {'location': '临江茶棚', 'item': 'chun_cha',
+                                              'direction': 'buy'})
+            await session.call_tool('social', {'actor': 'player', 'target': 'vendor',
+                                               'event': 'praise'})
+            await session.call_tool('import_lorebook', {'path': wi_path})
+            await session.call_tool('narration_context', {'scene_text': '镖局的规矩'})
+            st = data(await session.call_tool('read_state', {}))
+            cx = st.get('codex', {})
+            check('探索图鉴：地点/人物/物品/词条都已记录',
+                  {'临江茶棚', '后山古道'} <= set(cx.get('locations', []))
+                  and '茶棚老板' in cx.get('people', [])
+                  and '春茶' in cx.get('items', [])
+                  and '镖局' in cx.get('lore', []),
+                  'loc=%d people=%d items=%d lore=%d' % (
+                      len(cx.get('locations', [])), len(cx.get('people', [])),
+                      len(cx.get('items', [])), len(cx.get('lore', []))))
+
+            pv = data(await session.call_tool('open_panel', {'port': 8791}))
+            import urllib.request
+            html = urllib.request.urlopen(pv['url'], timeout=8).read().decode('utf-8')
+            vm = json.loads(urllib.request.urlopen(pv['url'].rstrip('/') + '/state',
+                                                   timeout=8).read().decode('utf-8'))
+            check('实况面板：页面与数据就绪且反映最新状态',
+                  '实况' in html and vm['player']['location'] == '后山古道'
+                  and '后山古道' in vm['codex']['locations'],
+                  pv['url'] + ' | 编年史 %d 条' % len(vm['chronicle']))
+            check('面板视图含引擎推导（心流/相位/图鉴/市场）',
+                  'flow' in vm['insights'] and 'phase' in vm['insights']
+                  and set(vm['codex']) == {'locations', 'people', 'items', 'lore'} and bool(vm['market']))
 
     # 14. CLI 冒烟（验证导入别名让任意目录名都能跑）
     cli = subprocess.run([sys.executable, os.path.join(ROOT, 'engine.py'),

@@ -107,7 +107,7 @@ class RelationIn(BaseModel):
 
 server = MCPServer(
     name="world-walker",
-    version="0.4.0",
+    version="0.5.0",
     instructions=(
         "万界·行者规则引擎：世界观无关的因果推演内核。主持文字互动游戏时："
         "先 world_schema 了解状态结构，按玩家设定调用 world_init 建世界；"
@@ -128,6 +128,7 @@ NEW_GAME_BRIEF = """你在主持一局文字互动游戏，数值结算必须全
 - 每个玩家行动：需要时 `read_state` 看现状 → 选对应工具结算（combat / trade / social / karma）
   → `narration_context`（传当下场景文字，拿到触发的设定条目、在场角色的卡面文字与编年史）
   → 把返回 JSON 转写成文学描写。
+- 移动：`travel`（只有它能改玩家的 location；首次到达自动进图鉴）。玩家说要"去某地/进某个房间"就用它。
 - 回合收尾：`tick`。
 - 每 3-5 回合：`narrative`（涌现事件与相位）与 `status`（心流/身份/道德/认知）各一次，
   把结果织进叙事节奏（例如心流偏低就安排一段缓冲剧情）。
@@ -135,6 +136,8 @@ NEW_GAME_BRIEF = """你在主持一局文字互动游戏，数值结算必须全
 - 有角色卡（酒馆生态的 .png/.json 卡）或世界书文件时：`character_card_read` 先看 → `add_character`
   把人收进局（卡面文字会自动进叙事层）→ 设定类文件用 `import_lorebook` 并入。
 - 玩家想反悔/分叉剧情：`snapshot` 存点、`restore` 回退（引擎状态是确定性的，回退后重放同种子一致）。
+- 开局后调一次 `open_panel`：给玩家一个只读实况面板（血量/心流/图鉴/编年史/行情，自动刷新）——
+  玩家记不住的东西（去过哪、见过谁、什么价）都在上面。
 
 ## 本次设定
 {setting}
@@ -155,6 +158,7 @@ def new_game(setting: str, state_path: str = "ww_state.json", seed: int = 202610
 
 
 _active = {"path": None}
+PANELS = {}
 ATTR_KEYS = ("str", "dex", "int", "con", "cha")
 SOCIAL_EVENTS = ("help", "harm", "threaten", "intimidate", "gift", "betray",
                  "cooperate", "insult", "praise", "murder")
@@ -314,6 +318,28 @@ def _seed_rng(state: dict) -> None:
         pass
 
 
+def _codex(state: dict) -> dict:
+    """探索图鉴：地点/人物/物品/设定词条。面板渲染它，也是"玩家记不住"的台账。"""
+    c = state.setdefault("codex", {})
+    for k in ("locations", "people", "items", "lore"):
+        c.setdefault(k, [])
+    return c
+
+
+def _remember(state: dict, kind: str, value: str) -> bool:
+    """记一条图鉴；返回是否首次见到。"""
+    v = str(value or "").strip()
+    if not v:
+        return False
+    lst = _codex(state)[kind]
+    if v in lst:
+        return False
+    lst.append(v)
+    if len(lst) > 200:
+        del lst[0]
+    return True
+
+
 def _require_entity(state: dict, entity_id: str, role: str) -> dict:
     ent = state.get("entities", {}).get(entity_id)
     if not ent:
@@ -388,6 +414,7 @@ def world_schema() -> dict:
         },
         "lore": "世界书条目数组（keys/secondary_keys/content/selective/constant/order/enabled）；"
                 "由 import_lorebook 或角色卡的 character_book 带入， narration_context 按关键词触发",
+        "codex": "探索图鉴 {locations, people, items, lore}——引擎自动记录，open_panel 的面板会渲染它",
         "market_item_shape": {
             "name": "显示名（如 '安神丹'）", "price": "当前价", "supply": "库存",
             "base_price": "基准价（价格会回归它）", "type": "类别", "desc": "描述",
@@ -418,6 +445,8 @@ def world_schema() -> dict:
             "import_lorebook": "导入 SillyTavern world-info 世界书",
             "snapshot": "存快照（回退/分叉用）",
             "restore": "从快照恢复",
+            "travel": "移动（唯一能改玩家 location 的工具；首次到达记图鉴）",
+            "open_panel": "打开实况面板（只读网页，自动刷新）",
         },
     }
 
@@ -535,6 +564,7 @@ def combat(attacker: str, defender: str, action_type: str = "attack",
     result = resolve_combat(state, attacker, defender, action_type, skill)
     for e in result.get("events", []):
         log_event(state, "combat", e)
+    _remember(state, "people", state.get("entities", {}).get(defender, {}).get("name", defender))
     return _finish(state, result)
 
 
@@ -554,6 +584,9 @@ def trade(location: str, item: str, direction: str, quantity: int = 1,
     result = resolve_trade(state, location, item, int(quantity), direction == "buy", entity)
     for e in result.get("events", []):
         log_event(state, "trade", e)
+    if result.get("success"):
+        it = state.get("market", {}).get(location, {}).get(item) or {}
+        _remember(state, "items", it.get("name", item))
     return _finish(state, result)
 
 
@@ -570,6 +603,7 @@ def social(actor: str, target: str, event: str, intensity: float = 1.0) -> dict:
     result = resolve_social_event(state, actor, target, event, float(intensity))
     for e in result.get("events", []):
         log_event(state, "social", e)
+    _remember(state, "people", state.get("entities", {}).get(target, {}).get("name", target))
     return _finish(state, result)
 
 
@@ -712,6 +746,7 @@ def add_character(path: str, entity_id: str, attrs: dict[str, int] | None = None
         if n:
             state.setdefault("lore", []).append(n)
             added += 1
+    _remember(state, "people", ent["name"])
     log_event(state, "system", "角色卡「%s」入局（%s），世界书 +%d 条" % (ent["name"], entity_id, added))
     return _finish(state, {"entity_id": entity_id, "name": ent["name"], "lore_added": added,
                            "entities": len(state["entities"])})
@@ -737,12 +772,14 @@ def narration_context(scene_text: str = "", recent: int = 12) -> dict:
     text = scene_text or " ".join(
         [player.get("location", "")] + [e.get("name", "") for e in state.get("entities", {}).values()])
     lore = _trigger_lore(state.get("lore", []), text)
+    for e in lore[:12]:
+        _remember(state, "lore", e.get("comment") or e["content"][:24])
     loc = player.get("location", "")
     present = [{"id": k, "name": e.get("name"), "desc": e.get("desc", ""),
                 "personality": e.get("personality", ""), "speech": e.get("speech", "")}
                for k, e in state.get("entities", {}).items()
                if k != "player" and (not loc or e.get("location") == loc)]
-    return {
+    return _finish(state, {
         "triggered_lore": [{"comment": e["comment"], "content": e["content"]} for e in lore[:12]],
         "lore_total": len(state.get("lore", [])),
         "present_cast": present[:8],
@@ -750,7 +787,46 @@ def narration_context(scene_text: str = "", recent: int = 12) -> dict:
         "flags": state.get("world_flags", []),
         "unsettled_karma": sum(e["amount"] for e in state.get("karma_ledger", [])
                                if e["from"] == "player" and not e["settled"]),
-    }
+    })
+
+
+@server.tool()
+def travel(location: str, note: str = "") -> dict:
+    """移动到新地点（Chinese: 玩家的 location 只由本工具修改；首次到达会记进探索图鉴）。
+    Move the player to a location; first arrival is recorded in the codex."""
+    state = _load()
+    player = state.get("entities", {}).get("player")
+    if not player:
+        raise ValueError("状态里没有 player")
+    loc = str(location).strip()
+    if not loc:
+        raise ValueError("location 不能为空")
+    first = _remember(state, "locations", loc)
+    player["location"] = loc
+    known = set(state.get("market", {})) | {e.get("location", "") for e in state.get("entities", {}).values()}
+    here = [k for k, e in state.get("entities", {}).items() if k != "player" and e.get("location") == loc]
+    for k in here:
+        _remember(state, "people", state["entities"][k].get("name", k))
+    log_event(state, "travel", "抵达「%s」%s%s" % (loc, "（初次探索）" if first else "",
+                                                  ("：" + note) if note else ""))
+    return _finish(state, {"location": loc, "first_time": first,
+                           "has_market": loc in state.get("market", {}),
+                           "entities_here": here,
+                           "in_setting": loc in known})
+
+
+@server.tool()
+def open_panel(port: int = 8765) -> dict:
+    """打开实况面板（Chinese: 只读网页，可一直挂着看血量/心流/图鉴/编年史/行情，状态一变自动刷新）。
+    Open the read-only live panel (auto-refreshing dashboard)."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("ww_panel", os.path.join(_SCRIPT_DIR, "panel.py"))
+    panel = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(panel)
+    srv, actual = panel.start(_state_path(), port)
+    PANELS["server"] = srv
+    return {"url": "http://127.0.0.1:%d/" % actual, "port": actual,
+            "state": _state_path(), "note": "面板只读；状态一变就推新数据"}
 
 
 @server.tool()

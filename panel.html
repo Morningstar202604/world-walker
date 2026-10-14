@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>万界·行者 · 实况</title>
+<style>
+  :root{
+    --bg:#0e1014; --panel:#161a21; --panel2:#1c222b; --line:#2a313d;
+    --gold:#e8b04b; --gold-dim:#8a6a2c; --text:#e8e6e1; --dim:#949cab;
+    --hp:#d9534f; --mp:#4a90d9; --ok:#5cb85c; --warn:#e0a03a;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font:14px/1.6 "Noto Sans SC","Microsoft YaHei",system-ui,sans-serif;padding:18px}
+  header{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:14px}
+  h1{font-size:20px;color:var(--gold);font-weight:600}
+  .sub{color:var(--dim);font-size:13px}
+  .live{margin-left:auto;display:flex;align-items:center;gap:8px;color:var(--dim);font-size:12px}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--ok);box-shadow:0 0 8px var(--ok)}
+  .dot.stale{background:var(--warn);box-shadow:0 0 8px var(--warn)}
+  .grid{display:grid;grid-template-columns:340px 1fr 380px;gap:14px;align-items:start}
+  @media(max-width:1220px){.grid{grid-template-columns:1fr 1fr}}
+  @media(max-width:820px){.grid{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:14px}
+  .card h2{font-size:13px;color:var(--gold);letter-spacing:.06em;font-weight:600;margin-bottom:10px;border-bottom:1px dashed var(--line);padding-bottom:6px}
+  .row{display:flex;justify-content:space-between;gap:10px;padding:3px 0}
+  .row .k{color:var(--dim)}
+  .barwrap{height:9px;background:#0a0c10;border-radius:5px;overflow:hidden;margin:4px 0 8px}
+  .bar{height:100%;border-radius:5px;transition:width .5s}
+  .bar.hp{background:linear-gradient(90deg,#a33,#d9534f)}
+  .bar.mp{background:linear-gradient(90deg,#2d5b8c,#4a90d9)}
+  .chip{display:inline-block;background:var(--panel2);border:1px solid var(--line);border-radius:20px;padding:2px 10px;margin:2px 4px 2px 0;font-size:12px;color:var(--text)}
+  .chip.gold{border-color:var(--gold-dim);color:var(--gold)}
+  .chip.dim{color:var(--dim)}
+  .cast{border-left:3px solid var(--gold-dim);padding:2px 0 2px 9px;margin:8px 0}
+  .cast b{color:var(--gold)}
+  .cast .d{color:var(--dim);font-size:12px}
+  .chronicle{max-height:340px;overflow:auto;font-size:13px}
+  .chronicle li{list-style:none;border-bottom:1px dotted var(--line);padding:6px 0;display:flex;gap:8px}
+  .chronicle .t{color:var(--gold-dim);flex:0 0 44px;font-variant-numeric:tabular-nums}
+  .chronicle .y{flex:0 0 62px;color:var(--dim);font-size:12px}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  td,th{padding:3px 4px;text-align:left;border-bottom:1px dotted var(--line)}
+  th{color:var(--dim);font-weight:500;font-size:12px}
+  .up{color:var(--hp)} .down{color:var(--ok)} .flat{color:var(--dim)}
+  .kv{display:flex;flex-wrap:wrap;gap:6px}
+  .moral i{display:inline-block;width:14px;text-align:center;font-style:normal;font-size:12px;color:var(--dim)}
+  .moral b{display:inline-block;font-weight:600;margin-right:8px}
+  .empty{color:var(--dim);font-size:12px}
+  .hint{color:var(--dim);font-size:12px;margin-top:6px}
+  code{color:var(--gold);background:#0a0c10;padding:1px 5px;border-radius:4px;font-size:12px}
+</style>
+</head>
+<body>
+<header>
+  <h1 id="world">万界·行者</h1>
+  <span class="sub" id="era"></span>
+  <span class="sub" id="tick">回合 —</span>
+  <span class="live"><span class="dot" id="dot"></span><span id="upd">连接中…</span></span>
+</header>
+
+<div class="grid">
+  <div>
+    <div class="card">
+      <h2>玩家</h2>
+      <div class="row"><span class="k">名号</span><b id="pname">—</b></div>
+      <div class="row"><span class="k">境界</span><span id="plevel">—</span></div>
+      <div class="row"><span class="k">所在</span><span id="ploc">—</span></div>
+      <div class="row"><span class="k">气血 <span id="phpn"></span></span><span id="pgold">—</span></div>
+      <div class="barwrap"><div class="bar hp" id="phpbar" style="width:0"></div></div>
+      <div class="row"><span class="k">内力 <span id="pmpn"></span></span></div>
+      <div class="barwrap"><div class="bar mp" id="pmpbar" style="width:0"></div></div>
+      <div class="kv" id="pattrs"></div>
+    </div>
+    <div class="card">
+      <h2>状态 · 引擎推导</h2>
+      <div class="row"><span class="k">心流</span><span id="flow">—</span></div>
+      <div class="row"><span class="k">世界相位</span><span id="phase">—</span></div>
+      <div class="row"><span class="k">未清因果债</span><span id="karma">—</span></div>
+      <div class="moral" id="moral"></div>
+      <div class="hint">心流偏低时适合安排缓冲剧情；相位决定大事件的烈度。</div>
+    </div>
+  </div>
+
+  <div>
+    <div class="card">
+      <h2>在场</h2>
+      <div id="present" class="empty">—</div>
+      <div id="others" class="hint"></div>
+    </div>
+    <div class="card">
+      <h2>探索图鉴 <span class="sub" id="lorecnt"></span></h2>
+      <div class="row"><span class="k">已探索地点</span></div><div class="kv" id="cx-loc"></div>
+      <div class="row"><span class="k">已遇见人物</span></div><div class="kv" id="cx-people"></div>
+      <div class="row"><span class="k">经手物品</span></div><div class="kv" id="cx-items"></div>
+      <div class="row"><span class="k">已触发设定</span></div><div class="kv" id="cx-lore"></div>
+    </div>
+    <div class="card">
+      <h2>编年史</h2>
+      <ul class="chronicle" id="chronicle"><li class="empty">暂无事件</li></ul>
+    </div>
+  </div>
+
+  <div>
+    <div class="card">
+      <h2>市场行情</h2>
+      <div id="market" class="empty">—</div>
+      <div class="hint">▲ 高于基准价（买入不划算）· ▼ 低于基准价（可囤）</div>
+    </div>
+    <div class="card">
+      <h2>世界标记</h2>
+      <div class="kv" id="flags"></div>
+      <div class="hint">状态文件一变，本页自动刷新；面板只读，不会改动对局。</div>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const pct = (a, b) => Math.max(0, Math.min(100, b > 0 ? a * 100 / b : 0));
+
+function fmtFlow(f) {
+  if (!f || f.state === undefined) return '—';
+  const m = { anxiety: '焦虑', flow: '心流', boredom: '无聊', unknown: '—' };
+  return (m[f.state] || f.state) + (f.adjustment !== undefined ? `（${f.adjustment > 0 ? '+' : ''}${f.adjustment}）` : '');
+}
+function fmtPhase(p) {
+  if (!p) return '—';
+  if (typeof p === 'string') return p;
+  const ph = p.phase || p.current || p.name;
+  return ph ? `${ph}${p.capital !== undefined ? ` · 资本 ${p.capital}` : ''}` : JSON.stringify(p).slice(0, 40);
+}
+function fmtIdentity(i) {
+  if (!i || typeof i !== 'object') return '';
+  const top = Object.entries(i).filter(([, v]) => typeof v === 'number').sort((a, b) => b[1] - a[1]).slice(0, 2);
+  return top.map(([k, v]) => `${k} ${typeof v === 'number' ? v.toFixed(2) : v}`).join(' · ');
+}
+function chips(el, arr, cls) {
+  const a = Array.isArray(arr) ? arr : [];
+  el.innerHTML = a.length ? a.map((x) => `<span class="chip ${cls || ''}">${x}</span>`).join('')
+                          : '<span class="empty">（还没有）</span>';
+}
+
+function render(v) {
+  $('world').textContent = `${v.world.name || '未命名世界'}`;
+  $('era').textContent = `${v.world.era || ''}${v.seed !== undefined ? ' · seed ' + v.seed : ''}`;
+  $('tick').textContent = `回合 ${v.tick}`;
+  $('upd').textContent = `更新于 ${v.updated_at}`;
+
+  const p = v.player;
+  $('pname').textContent = p.name; $('plevel').textContent = p.level || '—';
+  $('ploc').textContent = p.location || '—';
+  $('phpn').textContent = `${p.hp}/${p.hp_max}`;
+  $('pmpn').textContent = `${p.mp}/${p.mp_max}`;
+  $('pgold').textContent = `钱财 ${p.gold}`;
+  $('phpbar').style.width = pct(p.hp, p.hp_max) + '%';
+  $('pmpbar').style.width = pct(p.mp, p.mp_max || 1) + '%';
+  $('pattrs').innerHTML = Object.entries(p.attrs || {}).map(([k, x]) => `<span class="chip dim">${k} ${x}</span>`).join('');
+
+  const ins = v.insights || {};
+  $('flow').textContent = fmtFlow(ins.flow);
+  $('phase').textContent = fmtPhase(ins.phase);
+  const idn = fmtIdentity(ins.identity);
+  $('phase').title = idn;
+  $('karma').innerHTML = v.karma > 0 ? `<b style="color:var(--hp)">${v.karma}</b>` : '0';
+  $('moral').innerHTML = v.moral.dims.map((d, i) =>
+    `<b>${d}</b><i>${(v.moral.values[i] ?? 0) > 0 ? '+' + v.moral.values[i] : (v.moral.values[i] ?? 0)}</i>`).join('');
+
+  $('present').innerHTML = v.present.length ? v.present.map((c) =>
+    `<div class="cast"><b>${c.name}</b> <span class="d">${c.level || ''}${c.hp_max ? ` · ${c.hp}/${c.hp_max}` : ''}</span>
+     ${c.desc ? `<div class="d">${c.desc}</div>` : ''}</div>`).join('') : '<span class="empty">此刻无人</span>';
+  $('others').textContent = v.others.length ? '别处：' + v.others.map((o) => `${o.name}(${o.location || '?'})`).join('、') : '';
+
+  chips($('cx-loc'), v.codex.locations, 'gold');
+  chips($('cx-people'), v.codex.people);
+  chips($('cx-items'), v.codex.items);
+  chips($('cx-lore'), v.codex.lore, 'dim');
+  $('lorecnt').textContent = `设定词条 ${v.lore_total} 条`;
+
+  $('chronicle').innerHTML = v.chronicle.length ? v.chronicle.map((e) =>
+    `<li><span class="t">${e.tick ?? ''}</span><span class="y">${e.type || ''}</span><span>${e.desc || ''}</span></li>`).join('')
+    : '<li class="empty">暂无事件</li>';
+
+  $('market').innerHTML = v.market.length ? v.market.map((m) =>
+    `<div class="row"><span class="k">${m.location}${m.location === p.location ? '（本地）' : ''}</span></div>
+     <table><tr><th>物品</th><th>价</th><th>基准</th><th>库存</th></tr>
+     ${m.items.map((it) => {
+        const cls = it.delta > 0 ? 'up' : (it.delta < 0 ? 'down' : 'flat');
+        const sym = it.delta > 0 ? '▲' : (it.delta < 0 ? '▼' : '＝');
+        return `<tr><td>${it.name}</td><td class="${cls}">${it.price} ${sym}</td><td>${it.base_price}</td><td>${it.supply}</td></tr>`;
+     }).join('')}</table>`).join('') : '<span class="empty">此界无市</span>';
+
+  chips($('flags'), v.flags, 'dim');
+}
+
+let lastAt = 0;
+function markLive(ok) {
+  lastAt = Date.now();
+  const d = $('dot');
+  d.classList.toggle('stale', !ok);
+}
+function boot() {
+  fetch('/state').then((r) => r.json()).then((v) => { render(v); markLive(true); }).catch(() => markLive(false));
+  fetch('/state').then((r) => r.json()).then((v) => { render(v); markLive(true); }).catch(() => markLive(false));
+  if (window.EventSource) {
+    const es = new EventSource('/events');
+    es.addEventListener('state', (ev) => {
+      try { render(JSON.parse(ev.data)); markLive(true); } catch (e) { }
+    });
+    es.onerror = () => { markLive(false); };
+  }
+  setInterval(() => {
+    if (Date.now() - lastAt > 4000) {   // SSE 断了就退回轮询
+      fetch('/state').then((r) => r.json()).then((v) => { render(v); markLive(true); }).catch(() => markLive(false));
+    }
+  }, 2000);
+  setInterval(() => { if (Date.now() - lastAt > 8000) $('dot').classList.add('stale'); }, 3000);
+}
+boot();
+</script>
+</body>
+</html>
