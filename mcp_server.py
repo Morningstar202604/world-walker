@@ -14,6 +14,7 @@ Agent 只负责把引擎返回的 JSON 转写成文学描写。
 World Walker rule engine exposed over MCP. The host agent narrates; the engine decides.
 """
 
+import functools
 import json
 import os
 import random
@@ -51,7 +52,9 @@ from game_engine.rules.narrative_engine import (
 from game_engine.rules.social import resolve_social_event
 from game_engine.rules.social_extended import merit_quality
 from game_engine.rules.world_dynamics import event_information
+from game_engine.rules.models import model as _model_fn, model_names as _model_names
 from game_engine.state_schema import entity_key, load_state, log_event, save_state
+from game_engine.viz_series import record_sample
 
 from pydantic import BaseModel, Field
 
@@ -77,6 +80,8 @@ class EntityIn(BaseModel):
     level: str = Field(default="凡人", description="境界/等级，如「练气三层」「一流高手」「C-class」")
     gold: int = Field(default=0, description="钱财")
     location: str = Field(default="", description="所在地（要与 market 的 location 一致才可交易）")
+    items: dict[str, int] = Field(default_factory=dict,
+                                  description="随身物品 {商品 key: 数量}（可选，设定里可给初始持有；卖出须持有）")
     skills: list[str] = Field(default_factory=list, description="技能名（可选）")
     morality: list[int] = Field(default_factory=list, description="六维道德向量（可选，默认全 0）")
 
@@ -108,7 +113,7 @@ class RelationIn(BaseModel):
 
 server = MCPServer(
     name="world-walker",
-    version="0.7.0",
+    version="0.8.0",
     instructions=(
         "万界·行者规则引擎：世界观无关的因果推演内核。主持文字互动游戏时："
         "先 world_schema 了解状态结构，按玩家设定调用 world_init 建世界；"
@@ -116,6 +121,40 @@ server = MCPServer(
         "不得自行编造数值结果；回合结束调用 tick；每 3-5 回合调用 narrative 与 status 一次。"
     ),
 )
+
+# 工具里"有意拒绝"的原因必须回到宿主手里。MCP SDK 对非 ToolError 的异常只回
+# "Error executing tool X"（原因留在服务端日志），宿主 Agent 无从自纠；这里把
+# 规则层的 ValueError/KeyError 统一转成 ToolError，报错正文原样透传。
+try:
+    from mcp.server.mcpserver.exceptions import ToolError as _ToolError
+except ImportError:  # 兼容旧版 SDK 布局
+    try:
+        from mcp.server.fastmcp.exceptions import ToolError as _ToolError
+    except ImportError:
+        class _ToolError(Exception):
+            pass
+
+_raw_tool = server.tool
+
+
+def _guarded_tool(*dargs, **dkwargs):
+    _decorate = _raw_tool(*dargs, **dkwargs)
+
+    def _wrap(fn):
+        @functools.wraps(fn)
+        def _guarded(*args, **kwargs):
+            try:
+                return fn(*args, **kwargs)
+            except _ToolError:
+                raise
+            except (ValueError, KeyError) as exc:
+                msg = exc.args[0] if (isinstance(exc, KeyError) and exc.args) else str(exc)
+                raise _ToolError(str(msg)) from exc
+        return _decorate(_guarded)
+    return _wrap
+
+
+server.tool = _guarded_tool
 
 NEW_GAME_BRIEF = """你在主持一局文字互动游戏，数值结算必须全部通过 world-walker 的工具完成。
 
@@ -138,7 +177,11 @@ NEW_GAME_BRIEF = """你在主持一局文字互动游戏，数值结算必须全
 - 有角色卡（酒馆生态的 .png/.json 卡）或世界书文件时：`character_card_read` 先看 → `add_character`
   把人收进局（卡面文字会自动进叙事层）→ 设定类文件用 `import_lorebook` 并入。
 - 玩家想反悔/分叉剧情：`snapshot` 存点、`restore` 回退（引擎状态是确定性的，回退后重放同种子一致）。
-- 开局后调一次 `open_panel`：给玩家一个只读实况面板（血量/心流/图鉴/编年史/行情，自动刷新）——
+- 买东西用 `use_item`（丹药回气血是引擎结算、要花钱，不是白拿）；没有角色卡的新人物用 `spawn_npc` 入局。
+- 要算"效果大概多大"时先 `model_list` 查模型目录（价格回归/势力消长/谣言传播/厄运概率/心境摆荡…），
+  再用 `model(name, params)` 直接得数值——例如 `model('lerner_price', {'cogs': 60, 'elasticity': 2.5})`、
+  `model('logistic_sigmoid', {'x': 150, 'x0': 150})`——宿主别心算，也别再靠临场推理编数字。
+- 开局后调一次 `open_panel`：给玩家一个只读实况主舞台（叙事/HUD/事件时间线/图鉴/行情，自动刷新）——
   玩家记不住的东西（去过哪、见过谁、什么价）都在上面。
 - 成长走 `advance`（突破由引擎判定，别自己改等级）；每 20-50 回合调一次 `write_summary` 写摘要，
   接不上前文时用 `recap`；玩家提到很久以前的事，用 `recall` 按关键词把旧事捞回来——
@@ -300,6 +343,10 @@ def _load() -> dict:
 def _finish(state: dict, result: dict) -> dict:
     """状态落盘（save_state 里顺带归档旧事件），并在返回给 Agent 的结果上标注当前 tick。"""
     save_state(state, _state_path())
+    try:
+        record_sample(_state_path(), state)   # 长局态势侧写（写 <state>.viz.jsonl，不碰状态文件）
+    except Exception:  # aqg: top-level boundary —— 侧写是观测数据，任何异常都不许影响对局结算
+        pass
     result["_tick"] = state.get("tick", 0)
     return result
 
@@ -346,7 +393,8 @@ def _remember(state: dict, kind: str, value: str) -> bool:
 
 
 DEFAULT_CONFIG = {"event_log_keep": 200, "archive": True, "recap_budget_chars": 1500,
-                  "summary_keep": 30, "milestone_keep": 200, "panel_port": 8765}
+                  "summary_keep": 30, "milestone_keep": 200, "panel_port": 8765,
+                  "karma_ledger_keep": 500, "stage_max": 20}
 
 
 def _cfg(state: dict) -> dict:
@@ -407,6 +455,18 @@ def _normalize_entity(entity_id: str, raw: dict) -> dict:
         ent["skills"] = list(raw["skills"])
     if raw.get("morality"):
         ent["morality"] = list(raw["morality"])[:6]
+    items = raw.get("items")
+    if items:
+        cleaned = {}
+        for k, v in dict(items).items():
+            try:
+                n = int(v)
+            except (TypeError, ValueError):
+                continue
+            if n > 0:
+                cleaned[str(k)] = n
+        if cleaned:
+            ent["items"] = cleaned
     return ent
 
 
@@ -425,6 +485,7 @@ def world_schema() -> dict:
             "market": "location -> {item_key -> item_shape}；交易工具用 item_key 而非 name",
             "karma_ledger": "因果债流水（引擎维护）",
             "world_flags": "已触发的世界事件标记（字符串数组）",
+            "ui": "面板皮肤与品牌（可选）{skin: xuanshu|neutral|ink|neon, accent: '#rrggbb', motif: 文案, brand: 字标, tagline: 标语}",
             "event_log": "最近事件（引擎维护，最多 50 条）",
         },
         "entity_shape": {
@@ -436,6 +497,7 @@ def world_schema() -> dict:
             "level": "境界/等级（如 '练气三层'、'一流高手'、'C-class'）",
             "gold": "钱财",
             "location": "所在地（需与 market 的 location 键一致才可交易）",
+            "items": "{item_key: 数量} 随身物品（买入自动记入；卖出须持有）",
             "skills": "技能名数组（可选）",
             "morality": "六维道德向量（可选，默认 [0,0,0,0,0,0]）",
             "desc": "角色外观/背景文字（可选；add_character 从角色卡带入）",
@@ -461,11 +523,12 @@ def world_schema() -> dict:
             "market": "[{location, items: [{key, ...market_item_shape}]}]",
             "relations": "[{a, b, affinity, respect}]（键由引擎按字母序生成）",
             "world_flags": "字符串数组（可选）",
+            "ui": "{skin, accent, motif}（可选；面板皮肤，换世界风格用）",
             "seed": "整数种子（可选，默认 20261014）",
         },
         "action_tools": {
             "combat": "attacker/defender/action_type(attack|heavy|flee)/skill",
-            "trade": "location/item_key/quantity/direction(buy|sell)/entity",
+            "trade": "location/item_key/quantity/direction(buy|sell)/entity；买入记入持有，卖出须先持有",
             "social": "actor/target/event(%s)/intensity" % "|".join(SOCIAL_EVENTS),
             "karma": "actor/victim(可空)/karma_type(%s)" % "|".join(KARMA_TYPES),
             "tick": "回合结束（市场演化 + tick+1）",
@@ -473,6 +536,8 @@ def world_schema() -> dict:
             "status": "心流/身份/相位/道德/认知 聚合（每 3-5 回合查一次）",
             "merit": "功德值（纯函数：aid 救助 0~1, sincerity 诚心 0~1）",
             "narrative_weight": "事件叙事权重 = -log P(事件)（纯函数）",
+            "model": "按命名闭式模型算效果：name=模型名（见 model_list）, params=模型参数；不写状态",
+            "model_list": "列出模型层全部命名模型（公式/适用场景），先查再用 model",
             "narration_context": "叙事上下文包：触发设定 + 在场角色卡面 + 编年史（每回合调）",
             "character_card_read": "读角色卡（.png/.json，V1/V2/V3）",
             "add_character": "角色卡入局当 NPC（卡面进叙事层，卡内世界书并入）",
@@ -480,7 +545,9 @@ def world_schema() -> dict:
             "snapshot": "存快照（回退/分叉用）",
             "restore": "从快照恢复",
             "travel": "移动（唯一能改玩家 location 的工具；首次到达记图鉴）",
-            "open_panel": "打开实况面板（只读网页，自动刷新）",
+            "use_item": "用一件物品：持有则自备消耗（买入时已付）；未持有则按所在地市场价现买现用",
+            "spawn_npc": "现场生成一个 NPC（无角色卡也能入局；有卡请用 add_character）",
+            "open_panel": "打开实况主舞台（只读网页：叙事/HUD/时间线/抽屉，自动刷新）",
             "load_setting": "从设定包一键开一局（settings/*.setting.json）",
             "advance": "突破（引擎判定成败并给数值后果；长局的核心成长循环）",
             "recall": "按关键词回捞历史事件（归档 + 近期事件）",
@@ -495,8 +562,10 @@ def world_schema() -> dict:
 def world_init(state_path: str, world: WorldInfo, player: EntityIn,
                entities: list[EntityIn] | None = None, market: list[MarketIn] | None = None,
                relations: list[RelationIn] | None = None, world_flags: list[str] | None = None,
+               ui: dict | None = None,
                seed: int = 20261014) -> dict:
-    """按玩家设定创建一局新游戏并写盘（Chinese: 设定 → 世界状态；创建后即成为当前对局）。
+    """按玩家设定创建一局新游戏并写盘（Chinese: 设定 → 世界状态；创建后即成为当前对局。
+    ui 可给面板皮肤：{"skin": "xuanshu|neutral|ink|neon", "accent": "#rrggbb", "motif": "自由文案"}）。
     Create a new game from the player's setting bible and make it the active session."""
 
     state_entities = {"player": _normalize_entity("player", player.model_dump(exclude_none=True))}
@@ -542,6 +611,7 @@ def world_init(state_path: str, world: WorldInfo, player: EntityIn,
         "market": state_market,
         "karma_ledger": [],
         "world_flags": list(world_flags or []),
+        "ui": dict(ui or {}),
         "event_log": [],
         "world_info": {
             "name": world.name,
@@ -608,14 +678,16 @@ def combat(attacker: str, defender: str, action_type: str = "attack",
     _remember(state, "people", state.get("entities", {}).get(defender, {}).get("name", defender))
     if result.get("defender_dead"):
         _milestone(state, "击杀", "%s 击败了 %s" % (attacker, result.get("defender", defender)))
+    result["attacker_hp"] = state.get("entities", {}).get(attacker, {}).get("hp", 0)
     return _finish(state, result)
 
 
 @server.tool()
 def trade(location: str, item: str, direction: str, quantity: int = 1,
           entity: str = "player") -> dict:
-    """结算一次交易（Chinese: item 传市场里的 item_key，不是显示名；direction 取 buy|sell）。
-    Settle one trade at a market location."""
+    """结算一次交易（Chinese: item 传市场里的 item_key，不是显示名；direction 取 buy|sell。
+    买入会记进持有（entity.items）；卖出必须先持有——卖自己没有的东西会被拒。
+    Settle one trade at a market location (selling requires holding the goods)."""
 
     if direction not in ("buy", "sell"):
         raise ValueError("direction 只能是 buy / sell")
@@ -745,6 +817,26 @@ def narrative_weight(probability: float) -> dict:
     return {"info_weight": event_information(float(probability))}
 
 
+@server.tool()
+def model(name: str, params: dict[str, float] | None = None) -> dict:
+    """按命名闭式模型算效果（Chinese: 宿主不用自己推理——价格回归/势力消长/谣言传播/
+    厄运概率/心境摆荡都在这里，传模型名+参数直接得数值结果）。
+    Evaluate a named closed-form model (economics/population/epidemiology/probability/
+    thermodynamics/opinion): model('lotka_volterra', {'prey': 8, 'predator': 3})."""
+
+    res = _model_fn(name, **(params or {}))
+    res["params"] = params or {}
+    return res
+
+
+@server.tool()
+def model_list() -> dict:
+    """列出全部可用命名模型（Chinese: 模型层目录——名字/公式/适用场景，先查再用 model 调）。
+    List the named models available to the model tool."""
+
+    return {"models": _model_names()}
+
+
 
 @server.tool()
 def character_card_read(path: str) -> dict:
@@ -870,9 +962,12 @@ def advance(next_level: str, insight: float = 0.0) -> dict:
         for k in ATTR_KEYS:
             attrs[k] = int(attrs.get(k, 10)) + 1
         player["level"] = str(next_level)
-        player["stage"] = int(player.get("stage", 0)) + 1
+        cap = int((state.get("config") or {}).get("stage_max", 20))
+        old_stage = int(player.get("stage", 0))
+        player["stage"] = old_stage + 1 if cap <= 0 else min(old_stage + 1, cap)
         log_event(state, "breakthrough", "突破至 %s" % next_level)
-        _milestone(state, "突破", "突破至 %s（第 %d 次）" % (next_level, player["stage"]))
+        _milestone(state, "突破", "突破至 %s（第 %d 次%s）" % (next_level, player["stage"],
+                                                              "，已达设定上限" if cap > 0 and player["stage"] >= cap else ""))
     else:
         backlash = max(1, int(hp_max * 0.25))
         player["hp"] = max(1, int(player.get("hp", 1)) - backlash)
@@ -997,6 +1092,7 @@ def load_setting(path: str, state_path: str = "", seed: int | None = None) -> di
                      market=[MarketIn(**m) for m in b.get("market", [])],
                      relations=[RelationIn(**r) for r in b.get("relations", [])],
                      world_flags=list(b.get("world_flags", [])),
+                     ui=dict(b.get("ui") or {}),
                      seed=int(seed if seed is not None else b.get("seed", 20261014)))
     if b.get("currency"):
         state = _load()
@@ -1014,7 +1110,7 @@ def load_setting(path: str, state_path: str = "", seed: int | None = None) -> di
         _finish(state, {})
     return {**res, "setting": b.get("name", ""), "lore_entries": lore_n,
             "player_level": (b.get("player") or {}).get("level", ""),
-            "hint": "开局前可先 open_panel 把实况面板给玩家；行动用 combat/trade/social/karma 结算，移动用 travel。"}
+            "hint": "开局前可先 open_panel 把实况主舞台给玩家；行动用 combat/trade/social/karma 结算，移动用 travel。"}
 
 
 @server.tool()
@@ -1028,9 +1124,10 @@ def travel(location: str, note: str = "") -> dict:
     loc = str(location).strip()
     if not loc:
         raise ValueError("location 不能为空")
+    known = (set(state.get("market", {}))
+             | {e.get("location", "") for k, e in state.get("entities", {}).items() if k != "player"})
     first = _remember(state, "locations", loc)
     player["location"] = loc
-    known = set(state.get("market", {})) | {e.get("location", "") for e in state.get("entities", {}).values()}
     here = [k for k, e in state.get("entities", {}).items() if k != "player" and e.get("location") == loc]
     for k in here:
         _remember(state, "people", state["entities"][k].get("name", k))
@@ -1046,8 +1143,9 @@ def travel(location: str, note: str = "") -> dict:
 
 @server.tool()
 def open_panel(port: int = 8765) -> dict:
-    """打开实况面板（Chinese: 只读网页，可一直挂着看血量/心流/图鉴/编年史/行情，状态一变自动刷新）。
-    Open the read-only live panel (auto-refreshing dashboard)."""
+    """打开实况主舞台（Chinese: 只读网页——叙事主舞台/HUD/事件时间线/分级弹窗与提示/图鉴/行情，
+    状态一变自动刷新，缺档给可读横幅）。
+    Open the read-only live stage (auto-refreshing web view of the game state)."""
     import importlib.util
     spec = importlib.util.spec_from_file_location("ww_panel", os.path.join(_SCRIPT_DIR, "panel.py"))
     panel = importlib.util.module_from_spec(spec)
@@ -1056,6 +1154,89 @@ def open_panel(port: int = 8765) -> dict:
     PANELS["server"] = srv
     return {"url": "http://127.0.0.1:%d/" % actual, "port": actual,
             "state": _state_path(), "note": "面板只读；状态一变就推新数据"}
+
+
+@server.tool()
+def use_item(item: str, quantity: int = 1, location: str = "") -> dict:
+    """使用一件物品（Chinese: 买过就记在随身（items）里，用自备的不再扣钱；没买过则当"现买现用"，
+    按所在地市场价结算——丹药回气血，其余类目收而备用。花的是钱，不是白拿）。
+    Consume an owned item for free, or buy-and-use at the local market when not owned."""
+    state = _load()
+    _seed_rng(state)
+    p = state.get("entities", {}).get("player")
+    if not p:
+        raise ValueError("状态里没有 player")
+    qty = max(1, int(quantity))
+    cur = state.get("currency", "灵石")
+    inv = p.get("items")
+    if not isinstance(inv, dict):
+        inv = p["items"] = {}
+    owned = int(inv.get(item, 0))
+    mkt_any = next((v for mk in state.get("market", {}).values()
+                    for k, v in mk.items() if k == item), None)
+    if owned >= qty:
+        inv[item] = owned - qty
+        if inv[item] <= 0:
+            del inv[item]
+        price, source = 0, "自备"
+        it = mkt_any or {}
+    else:
+        loc = str(location or p.get("location", "")).strip()
+        mkt = state.get("market", {}).get(loc)
+        if not mkt or item not in mkt:
+            raise ValueError("此地没有「%s」，也未持有「%s」（所在地: %s）" % (item, item, loc or "未知"))
+        it = mkt[item]
+        if int(it.get("supply", 0)) < qty:
+            raise ValueError("库存不足：「%s」只剩 %d" % (item, int(it.get("supply", 0))))
+        price = int(it.get("price", 0)) * qty
+        if p.get("gold", 0) < price:
+            raise ValueError("%s不足：需要%d，只有%d" % (cur, price, p.get("gold", 0)))
+        p["gold"] -= price
+        it["supply"] = int(it.get("supply", 0)) - qty
+        source = "现买现用"
+    t = str(it.get("type", ""))
+    name = it.get("name", item)
+    unit = int(it.get("price", 0)) or 50
+    if "丹药" in t or "药" in t:
+        heal = max(8, unit * qty // 5)
+        p["hp"] = min(int(p.get("hp_max", 100)), int(p.get("hp", 0)) + heal)
+        effect = "回复%d气血" % heal
+    elif "玄器" in t:
+        effect = "检视一过（玄器要养，暂无即时效果）"
+    else:
+        effect = "收而备用"
+    pay = ("花费%d%s" % (price, cur)) if price else "自备（买入时已付）"
+    log_event(state, "use_item", "使用%s×%d（%s）：%s" % (name, qty, pay, effect))
+    _remember(state, "items", name)
+    return _finish(state, {"item": item, "used": qty, "cost": price, "currency": cur,
+                           "source": source, "items_after": int(inv.get(item, 0)),
+                           "effect": effect, "hp": p["hp"], "hp_max": p.get("hp_max", 0),
+                           "gold": p["gold"]})
+
+
+@server.tool()
+def spawn_npc(id: str, name: str, faction: str = "", attrs: dict[str, int] | None = None,
+              level: str = "凡人", hp: int = 60, gold: int = 0, location: str = "",
+              desc: str = "", personality: str = "") -> dict:
+    """现场生成一个 NPC（Chinese: 自由游玩时"新人物进场"就用它——没有卡文件也能入局；
+              有角色卡请用 add_character。新人自动进探索图鉴）。
+    Spawn a freeform NPC into the active game (no card file needed)."""
+    state = _load()
+    eid = str(id or "").strip()
+    if not eid or not str(name or "").strip():
+        raise ValueError("id 与 name 必填")
+    if eid in state.get("entities", {}):
+        raise ValueError("实体已存在: %s（换个 id）" % eid)
+    ent = _normalize_entity(eid, {
+        "name": name, "faction": faction, "attrs": attrs or {}, "hp": hp, "hp_max": hp,
+        "gold": gold, "location": location or state.get("entities", {}).get("player", {}).get("location", ""),
+        "level": level, "desc": desc, "personality": personality,
+    })
+    state.setdefault("entities", {})[eid] = ent
+    _remember(state, "people", ent["name"])
+    log_event(state, "system", "新人入局：%s（%s，%s）" % (name, eid, ent["location"]))
+    return _finish(state, {"entity_id": eid, "name": name, "entities": len(state["entities"]),
+                           "location": ent["location"]})
 
 
 @server.tool()

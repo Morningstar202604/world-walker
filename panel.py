@@ -16,6 +16,7 @@
 """
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -39,12 +40,159 @@ from game_engine.rules.narrative_engine import (  # noqa: E402
 from game_engine.state_schema import load_state  # noqa: E402
 
 HTML_FILE = os.path.join(_SCRIPT_DIR, "panel.html")
+HTML_DIR = _SCRIPT_DIR
 MORAL_DIMS = ("关怀", "公平", "忠诚", "权威", "圣洁", "自由")
+EVENTS_CAP = 40
+
+# 唯一的事件分级表（前端不得再维护关键词表；未知类型走 EVENT_LABELS 兜底）
+EVENT_LABELS = {
+    "combat": ("交锋", "战"),
+    "trade": ("交易", "交"),
+    "social": ("人情", "情"),
+    "karma": ("因果", "债"),
+    "breakthrough": ("突破", "境"),
+    "travel": ("行旅", "路"),
+    "use_item": ("用物", "药"),
+    "emergent": ("风起", "风"),
+    "system": ("世界", "启"),
+    "tick": ("回合", "回"),
+}
+
+SKIN_ACCENTS = {"xuanshu": "#e8b04b", "neutral": "#8aa6c8"}
+
+
+def classify_event(ev, milestone_ticks=()):
+    """把一条 event_log 映射成前端可直接渲染的条目（kind/severity/title/icon 全在此决定）。"""
+    etype = str(ev.get("type") or "system")
+    desc = str(ev.get("desc") or "")
+    tick = int(ev.get("tick", 0) or 0)
+    title, icon = EVENT_LABELS.get(etype, ("事件", "·"))
+    kind, severity = "事件", "info"
+    if etype == "combat":
+        if any(w in desc for w in ("击败", "击杀", "倒下")):
+            kind, severity = "击杀", "danger"
+        else:
+            kind, severity = "交手", "warning"
+    elif etype == "trade":
+        kind = "购入" if "购买" in desc else ("出售" if "出售" in desc else "交易")
+        severity = "success"
+    elif etype == "social":
+        kind = "人情"
+        severity = "success" if any(w in desc for w in ("好感", "敬重", "结盟", "帮助")) else "info"
+    elif etype == "karma":
+        kind, severity = "因果", "warning"
+    elif etype == "breakthrough":
+        if any(w in desc for w in ("失败", "反噬")):
+            kind, severity = "突破受挫", "danger"
+        else:
+            kind, severity = "突破", "success"
+    elif etype == "travel":
+        kind = "初探" if "初次" in desc else "行旅"
+    elif etype == "use_item":
+        kind, severity = "用物", "success"
+    elif etype == "emergent":
+        kind, severity = "涌现", "warning"
+    elif etype == "system":
+        kind = "入局"
+    digest = hashlib.sha1(desc.encode("utf-8")).hexdigest()[:8]
+    return {"id": "%d:%s:%s" % (tick, etype, digest), "tick": tick, "type": etype,
+            "kind": kind, "severity": severity, "title": title, "desc": desc,
+            "icon": icon, "milestone": tick in set(milestone_ticks or ())}
+
+
+def build_scene(state, events, player):
+    """叙事主舞台标题/描述/氛围：只用状态里已有的文字，不编造剧情。"""
+    world = state.get("world_info", {}) or {}
+    loc = str(player.get("location", "") or "")
+    summaries = state.get("summaries") or []
+    desc = str(summaries[-1].get("text", "") if summaries else "") or str(world.get("location_desc", "") or "")
+    focus = None
+    for e in reversed(events):
+        if e["severity"] != "info":
+            focus = e["desc"]
+            break
+    if not focus and events:
+        focus = events[-1]["desc"]
+    if not desc and focus:
+        desc = focus
+    mood = "neutral"
+    if events:
+        last = events[-1]
+        if last["type"] == "trade":
+            mood = "trade"
+        elif last["type"] == "social":
+            mood = "social"
+        elif last["type"] == "travel":
+            mood = "discovery"
+        elif last["severity"] == "danger":
+            mood = "danger"
+        elif last["severity"] == "success":
+            mood = "growth"
+    return {"location": loc, "title": loc or str(world.get("name", "") or ""),
+            "description": desc, "mood": mood, "focus_event": focus}
+
+
+def build_inventory(state, player):
+    """随身物品：以 player.items 为准，用市场元数据补显示名与类别。"""
+    items = player.get("items")
+    if not isinstance(items, dict):
+        return []
+    meta = {}
+    for mk in (state.get("market") or {}).values():
+        if isinstance(mk, dict):
+            for k, it in mk.items():
+                if isinstance(it, dict) and k not in meta:
+                    meta[k] = it
+    out = []
+    for k in sorted(items):
+        try:
+            n = int(items[k])
+        except (TypeError, ValueError):
+            continue
+        if n <= 0:
+            continue
+        it = meta.get(k) or {}
+        out.append({"key": str(k), "name": str(it.get("name") or k),
+                    "quantity": n, "type": str(it.get("type") or "")})
+    return out
+
+
+def build_relations(state, player_id="player"):
+    """只返回与玩家有关的关系（键为字母序 a:b），带对方名字。"""
+    rels = state.get("relations") or {}
+    ents = state.get("entities") or {}
+    out = []
+    if not isinstance(rels, dict):
+        return out
+    for key, val in rels.items():
+        if not isinstance(val, dict):
+            continue
+        parts = str(key).split(":")
+        if len(parts) != 2 or player_id not in parts:
+            continue
+        other = parts[0] if parts[1] == player_id else parts[1]
+        ent = ents.get(other) or {}
+        out.append({"id": other, "name": str(ent.get("name") or other),
+                    "affinity": int(val.get("affinity", 0) or 0),
+                    "respect": int(val.get("respect", 0) or 0)})
+    out.sort(key=lambda r: r["id"])
+    return out
+
+
+def skin_for_world(state):
+    """世界皮肤：玄枢界放行专属皮肤，其余世界回退中性皮肤。"""
+    world = state.get("world_info", {}) or {}
+    flags = state.get("world_flags") or []
+    text = ("%s %s" % (world.get("name", ""), " ".join(str(f) for f in flags))).lower()
+    if "xuanshu" in text or "玄枢" in text:
+        return {"id": "xuanshu", "accent": SKIN_ACCENTS["xuanshu"]}
+    return {"id": "neutral", "accent": SKIN_ACCENTS["neutral"]}
 
 
 def view_model(state_path):
     """把状态文件转成面板要用的视图模型（只读，不改状态）。"""
     s = load_state(state_path)
+    record_sample(state_path, s)   # 侧写：态势采样（写的是 <state>.viz.jsonl，不碰状态文件）
     player = s.get("entities", {}).get("player", {})
     loc = player.get("location", "")
     try:
@@ -55,6 +203,12 @@ def view_model(state_path):
         }
     except Exception as e:
         insights = {"error": str(e)[:120]}
+
+    milestone_ticks = {int(m.get("tick", 0) or 0) for m in (s.get("milestones") or [])}
+    events = [classify_event(e, milestone_ticks)
+              for e in (s.get("event_log") or [])[-EVENTS_CAP:]]
+    karma = sum(e.get("amount", 0) for e in s.get("karma_ledger", [])
+                if e.get("from") == "player" and not e.get("settled"))
 
     market = []
     for mLoc, items in sorted(s.get("market", {}).items()):
@@ -75,20 +229,35 @@ def view_model(state_path):
         "world": s.get("world_info", {}) or {},
         "tick": s.get("tick", 0),
         "seed": s.get("rng_seed"),
+        "skin": skin_for_world(s),
+        "meta": {
+            "state_path": os.path.abspath(state_path),
+            "sidecar": os.path.abspath(series_path(state_path)),
+            "read_only": True,
+            "panel": "万界·行者 实况主舞台（只读）",
+        },
+        "scene": build_scene(s, events, player),
+        "events": events,
+        "relations": build_relations(s),
         "player": {
             "name": player.get("name", "玩家"), "level": player.get("level", ""),
+            "stage": int(player.get("stage", 0) or 0),
+            "stage_max": int((s.get("config") or {}).get("stage_max", 20) or 20),
+            "mind_scars": int(player.get("mind_scars", 0) or 0),
             "hp": player.get("hp", 0), "hp_max": player.get("hp_max", 1),
             "mp": player.get("mp", 0), "mp_max": player.get("mp_max", 0),
             "gold": player.get("gold", 0), "location": loc,
+            "currency": str(s.get("currency", "灵石")),
+            "karma": karma,
             "attrs": player.get("attrs", {}),
+            "inventory": build_inventory(s, player),
         },
         "insights": insights,
         "moral": {
             "dims": MORAL_DIMS,
             "values": (player.get("morality") or [0, 0, 0, 0, 0, 0])[:6],
         },
-        "karma": sum(e.get("amount", 0) for e in s.get("karma_ledger", [])
-                     if e.get("from") == "player" and not e.get("settled")),
+        "karma": karma,
         "present": [{"id": k, "name": e.get("name", k), "level": e.get("level", ""),
                      "hp": e.get("hp"), "hp_max": e.get("hp_max"),
                      "desc": (e.get("desc") or "")[:90]}
@@ -113,11 +282,81 @@ def view_model(state_path):
     }
 
 
+STATIC_WHITELIST = {
+    "/": ("panel.html", "text/html; charset=utf-8"),
+    "/panel.html": ("panel.html", "text/html; charset=utf-8"),
+    "/panel.css": ("panel.css", "text/css; charset=utf-8"),
+    "/panel.js": ("panel.js", "text/javascript; charset=utf-8"),
+    "/assets/echarts.min.js": (os.path.join("assets", "echarts.min.js"),
+                               "text/javascript; charset=utf-8"),
+}
+
+from game_engine.viz_series import SERIES_CAP, load_series, record_sample, series_path  # noqa: E402
+
+
+# 皮肤注册表：id → 视觉与图表调色板（前端只消费，不在 JS 里写配色表）
+SKINS = {
+    "xuanshu": {
+        "id": "xuanshu", "accent": "#e8b04b", "motif": "玄门·墨金",
+        "palette": {"line": "#e8b04b", "area": "rgba(232,176,75,.18)", "bar": "#c07a3a",
+                    "hp": "#d9534f", "mp": "#4a90d9", "grid": "#2b3341", "text": "#a3abb9"},
+    },
+    "neutral": {
+        "id": "neutral", "accent": "#8aa6c8", "motif": "通用·石墨",
+        "palette": {"line": "#8aa6c8", "area": "rgba(138,166,200,.16)", "bar": "#6f8cab",
+                    "hp": "#d9534f", "mp": "#4a90d9", "grid": "#2b3341", "text": "#a3abb9"},
+    },
+    "ink": {
+        "id": "ink", "accent": "#a8b6c1", "motif": "水墨·宣纸",
+        "palette": {"line": "#8fb0c9", "area": "rgba(143,176,201,.14)", "bar": "#7d8b96",
+                    "hp": "#b4553f", "mp": "#5d7fa3", "grid": "#333a44", "text": "#9aa4b0"},
+    },
+    "neon": {
+        "id": "neon", "accent": "#4fe0c0", "motif": "霓虹·夜城",
+        "palette": {"line": "#4fe0c0", "area": "rgba(79,224,192,.16)", "bar": "#c74fe0",
+                    "hp": "#ff5d7d", "mp": "#4fa8ff", "grid": "#243044", "text": "#93a4bd"},
+    },
+}
+
+
+# 品牌默认值（单一信源，BRAND.md 与 README 引用此处；ui.brand/tagline 可整局覆盖）
+DEFAULT_BRAND = "万界·行者"
+DEFAULT_TAGLINE = "万界为卷 · 因果为墨"
+
+
+def skin_for_world(state):
+    """世界皮肤：优先取状态里的 ui 配置（设定包可写），否则按世界名启发式，未知一律回退 neutral。
+    ui.brand / ui.tagline 让基于本引擎的其他游戏带上自己的品牌。"""
+    world = state.get("world_info", {}) or {}
+    ui = state.get("ui") if isinstance(state.get("ui"), dict) else {}
+    sid = str(ui.get("skin") or "").strip().lower()
+    if sid not in SKINS:
+        text = ("%s %s" % (world.get("name", ""), " ".join(str(f) for f in (state.get("world_flags") or [])))).lower()
+        sid = "xuanshu" if ("xuanshu" in text or "玄枢" in text) else "neutral"
+    skin = dict(SKINS[sid])
+    skin["palette"] = dict(SKINS[sid]["palette"])
+    if ui.get("accent"):
+        skin["accent"] = str(ui["accent"])
+    if ui.get("motif"):
+        skin["motif"] = str(ui["motif"])
+    skin["brand"] = str(ui.get("brand") or DEFAULT_BRAND)[:24]
+    skin["tagline"] = str(ui.get("tagline") or DEFAULT_TAGLINE)[:48]
+    return skin
+
+
 class Handler(BaseHTTPRequestHandler):
     state_path = None
 
     def log_message(self, *args):  # 静音访问日志
         pass
+
+    def handle_one_request(self):
+        """浏览器/SSE 客户端随时可能掐断连接（刷新、关页签）——这是常态，不是错误。
+        默认实现会把 ConnectionAbortedError 抛给 socketserver 打一整篇栈，这里吞掉。"""
+        try:
+            super().handle_one_request()
+        except (ConnectionError, TimeoutError):
+            self.close_connection = True
 
     def _send(self, code, ctype, body):
         self.send_response(code)
@@ -127,22 +366,70 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _static(self, path):
+        """只发白名单里的固定文件；其余路径一律 404（不拼用户输入进文件系统）。"""
+        entry = STATIC_WHITELIST.get(path)
+        if not entry:
+            self._send(404, "text/plain; charset=utf-8", b"not found")
+            return
+        fname, ctype = entry
+        try:
+            with open(os.path.join(HTML_DIR, fname), "rb") as f:
+                self._send(200, ctype, f.read())
+        except OSError:
+            self._send(404, "text/plain; charset=utf-8", b"not found")
+
     def do_GET(self):
         path = self.path.split("?")[0]
         if path == "/state":
             try:
                 vm = json.dumps(view_model(self.state_path), ensure_ascii=False).encode("utf-8")
-            except Exception as e:
-                vm = json.dumps({"error": str(e)[:200]}).encode("utf-8")
+            except FileNotFoundError:
+                vm = json.dumps({
+                    "error": "对局状态文件不存在：%s" % self.state_path,
+                    "hint": "先在对话里开一局（world_init / load_setting），本页会自动接上。",
+                }, ensure_ascii=False).encode("utf-8")
+            except Exception as e:  # aqg: top-level boundary —— HTTP 端点：任何读取失败都转成页面可读错误，不抛栈
+                vm = json.dumps({
+                    "error": "状态文件读取失败：%s" % str(e)[:180],
+                    "hint": "文件可能正在写入或格式不合法；稍候重试，或先用 snapshot 校验存档。",
+                }, ensure_ascii=False).encode("utf-8")
             self._send(200, "application/json; charset=utf-8", vm)
+        elif path == "/series":
+            body = json.dumps(self._series_payload(), ensure_ascii=False).encode("utf-8")
+            self._send(200, "application/json; charset=utf-8", body)
         elif path == "/events":
             self._sse()
         else:
-            try:
-                with open(HTML_FILE, "rb") as f:
-                    self._send(200, "text/html; charset=utf-8", f.read())
-            except OSError:
-                self._send(500, "text/plain; charset=utf-8", b"panel.html missing")
+            self._static(path)
+
+    def _series_payload(self):
+        """长局态势序列：直接读侧写文件（不读也不写状态文件）。"""
+        try:
+            samples = load_series(self.state_path)
+        except (OSError, ValueError, TypeError):
+            samples = []          # 侧写坏行/缺文件 → 图表空态，接口照常 200
+        skin = SKINS["neutral"]
+        try:
+            skin = skin_for_world(load_state(self.state_path))
+        except (OSError, ValueError, TypeError):
+            pass                  # 状态不可读时调色板退回 neutral；错误态由 /state 负责展示
+        return {"samples": samples, "cap": SERIES_CAP, "palette": skin.get("palette", {})}
+
+    def _state_payload(self):
+        """SSE 每帧的 JSON：状态不可读时不是断流，而是把原因推给页面显示。"""
+        try:
+            return json.dumps(view_model(self.state_path), ensure_ascii=False)
+        except FileNotFoundError:
+            return json.dumps({
+                "error": "对局状态文件不存在：%s" % self.state_path,
+                "hint": "先在对话里开一局（world_init / load_setting），本页会自动接上。",
+            }, ensure_ascii=False)
+        except Exception as e:  # aqg: top-level boundary —— SSE 端点：状态不可读时推错误帧而不是断流
+            return json.dumps({
+                "error": "状态文件读取失败：%s" % str(e)[:180],
+                "hint": "文件可能正在写入或格式不合法；稍候重试，或先用 snapshot 校验存档。",
+            }, ensure_ascii=False)
 
     def _sse(self):
         self.send_response(200)
@@ -160,7 +447,7 @@ class Handler(BaseHTTPRequestHandler):
                     sig = None
                 if sig != last:
                     last = sig
-                    body = json.dumps(view_model(self.state_path), ensure_ascii=False)
+                    body = self._state_payload()
                     self.wfile.write(("event: state\ndata: %s\n\n" % body).encode("utf-8"))
                 else:
                     self.wfile.write(b": ping\n\n")

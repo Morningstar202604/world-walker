@@ -6,7 +6,7 @@
 load_setting(path="settings/玄枢界.setting.json")     # 世界 + 人物 + 市场 + 关系 + 世界书，一次到位
 ```
 
-载入后建议紧接着 `open_panel`，给玩家一块可一直看的实况面板。
+载入后建议紧接着 `open_panel`，给玩家一块可一直看的实况主舞台（叙事/HUD/长局图表/皮肤）。
 
 ## 格式
 
@@ -19,6 +19,7 @@ load_setting(path="settings/玄枢界.setting.json")     # 世界 + 人物 + 市
 | `relations` | | `[{a, b, affinity, respect}]`（键序由引擎生成） |
 | `world_flags` | | 字符串数组（世界状态标记） |
 | `currency` | | 货币名（默认「灵石」；示例设定用「玄晶」，交易文案会跟着变） |
+| `ui` | | 面板皮肤与品牌：`{skin: xuanshu\|neutral\|ink\|neon, accent: '#rrggbb', motif: '风格文案', brand: '字标', tagline: '标语'}`；让本世界在主舞台上自带视觉风格与自己的名字（未知 skin 回退 neutral；规范见 `BRAND.md`） |
 | `lore` | | 世界书条目，**与酒馆 character_book 同形**：`keys` / `secondary_keys` / `selective` / `constant` / `insertion_order` / `content` / `comment`。`narration_context` 按关键词触发它们 |
 | `seed` | | 随机种子（可复现） |
 | `state_path_hint` | | 默认状态文件名 |

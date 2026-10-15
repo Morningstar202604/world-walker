@@ -3,11 +3,11 @@
 > 核心原则:**所有确定性计算交给引擎,Agent 只负责文学叙事**。
 
 > **MCP 模式**：宿主是 MCP 客户端（Claude Code / Codex / Cursor 等）时，用 `mcp_server.py`
-> 暴露的 21 个工具，语义与本文命令一一对应：`cognition`/`flow`/`identity`/`panarchy`/
+> 暴露的 31 个工具，语义与本文命令一一对应：`cognition`/`flow`/`identity`/`panarchy`/
 > `moral_update` 合并为 `status`，`info_weight` 改名为 `narrative_weight`，`world_state`
 > 改名为 `read_state`；另增建局三件套 `world_schema` / `world_init` / `world_open`、
 > 叙事层 `narration_context`（关键词触发设定 + 在场角色卡面 + 编年史，每回合调）、
-> 酒馆生态 `character_card_read` / `add_character` / `import_lorebook`、回退 `snapshot` / `restore`、移动 `travel`（记图鉴）、实况面板 `open_panel`、设定包 `load_setting`、长局 `advance` / `recall` / `write_summary` / `recap` / `configure`。
+> 酒馆生态 `character_card_read` / `add_character` / `import_lorebook`、回退 `snapshot` / `restore`、移动 `travel`（记图鉴）、实况主舞台 `open_panel`（只读：叙事主舞台 + HUD + 事件时间线 + 分级弹窗/提示 + 图鉴/市场/大事记抽屉；缺档可读报错并可重试）、设定包 `load_setting`、长局 `advance` / `recall` / `write_summary` / `recap` / `configure`、物资 `use_item`（持有则自备消耗、买入时已付；未持有按所在地市场价现买现用，引擎结算花钱）、自由生成 `spawn_npc`（无角色卡也能入局）、模型层 `model` / `model_list`（查 16 个命名闭式模型：经济 Lerner/OU 价格、Cobb-Douglas、种群 logistic/Lotka-Volterra、流行病 SIR、风险 Poisson/生存、热力学松弛、舆论 bounded-confidence；宿主直接用公式推导效果，不再逐事件拍脑袋）。
 > 一键开局：调 `new_game` prompt（参数填设定），产出「协议 + 设定 + 状态文件」的完整开局指令。
 > 安装 `pip install -e ".[mcp]"` 后，客户端命令填 `world-walker-mcp`。
 
@@ -18,7 +18,7 @@
 | 命令 | 用途 | 关键参数 |
 |------|------|---------|
 | `combat` | 战斗结算 | --attacker --defender --action_type |
-| `trade` | 交易结算 | --location --item --quantity --direction |
+| `trade` | 交易结算 | --location --item --quantity --direction（买入记入持有；卖出须先持有） |
 | `social` | 关系更新 | --actor --target --event --intensity |
 | `karma` | 因果债分录 | --actor --victim --karma_type |
 | `tick` | 回合结束 | (无额外参数) |

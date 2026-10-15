@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "world-walker"
-version = "0.7.0"
+version = "0.8.0"
 description = "万界·行者 World Walker — AI 驱动的文字互动游戏引擎（世界观无关规则内核 + MCP 服务器）"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -28,3 +28,19 @@ world-walker-mcp = "game_engine.mcp_server:main"
 # 仓库根即 game_engine 包（引擎内部统一 `import game_engine.*`）
 package-dir = { "game_engine" = "." }
 packages = ["game_engine", "game_engine.rules"]
+
+# 运行时按路径读取的非 .py 资源必须进包，否则 pip 安装后 open_panel / load_setting 会找不到文件
+[tool.setuptools.package-data]
+game_engine = [
+  "panel.html",
+  "panel.css",
+  "panel.js",
+  "assets/*.js",
+  "settings/*.json",
+  "settings/*.md",
+  "README.md",
+  "README.en.md",
+  "BRAND.md",
+  "ARCHITECTURE.md",
+  "GAME_MASTER_PROTOCOL.md",
+]

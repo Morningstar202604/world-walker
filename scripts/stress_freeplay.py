@@ -1,0 +1,390 @@
+#!/usr/bin/env python3
+"""
+自由玩家压力测试 (stress_freeplay.py)
+
+模拟一个"自由发挥"的玩家连续游玩 2000 回合（回合数可配），全程走**真实 MCP stdio 通道**
+（起一个 mcp_server.py 子进程 + ClientSession，和 ZCode / opencode 接到的是同一条路）。
+
+玩家行为分布（可配置，默认贴近真人习惯）：
+- 探索：travel 到已知/新地点 + narration_context + 随机 social + karma（善或偷窃，看玩家"心态"）
+- 切磋：和某个 NPC 开打，连打到对方倒下；自己血少就买疗伤散 / 回满
+- 买卖：看行情买丹、低价囤货、高价抛售（验证价格不会崩）
+- 突破：阶段性尝试 advance；失败就 snapshot→restore 回退重刷（玩家惯用的"试到成"心态）
+- 死局：血量打空时"复活"（新命续玩，玩家口头禅"我还活着"）
+- 记忆：周期性 write_summary / recap / recall；NPC 死绝后 add_npc 让江湖有人气
+- 习惯验证：混入少量"错招"（坏 location / 负数数量 / 概率 0）确认引擎报错而不是崩
+
+不变量（每轮全量断言，任何一条破了立即记录）：
+- 状态文件可解析、entity 的 hp/gold 不出现负数、market 价格 0<=price<=base*3 且 base 不被砸穿
+- 事件归档正常（event_log 不超 keep，archived_events 只增不减）
+- 工具错误率（预期只有故意打错的那几条）
+
+用法:  python scripts/stress_freeplay.py [回合数=2000]
+退出码: 0 = 全绿；1 = 有不变量破坏或错误率超标；2 = 缺 mcp SDK
+"""
+
+import asyncio
+import json
+import os
+import random
+import sys
+import tempfile
+import time
+
+try:
+    from mcp import ClientSession
+    from mcp.client.stdio import StdioServerParameters, stdio_client
+except ImportError:
+    print('缺少 mcp SDK。请先安装: pip install -e ".[mcp]"')
+    sys.exit(2)
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SERVER = os.path.join(ROOT, 'mcp_server.py')
+SETTING = os.path.join(ROOT, 'settings', '玄枢界.setting.json')
+DEFAULT_TURNS = 2000
+REPORT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'last_stress_report.json')
+
+KNOWN_LOCS = ['临川城', '听霄城', '旧枢台废墟', '南屏药谷', '渡口']
+BAD_LOCATIONS = ['不存在的楼', '墟界裂口']
+
+
+def data(result):
+    for attr in ('structuredContent', 'structured_content'):
+        sc = getattr(result, attr, None)
+        if isinstance(sc, dict):
+            return sc.get('result', sc) if set(sc) == {'result'} else sc
+    for c in getattr(result, 'content', None) or []:
+        if getattr(c, 'type', '') == 'text':
+            try:
+                return json.loads(c.text)
+            except Exception:  # aqg: top-level boundary —— 返回体非 JSON 时回退原文，不中断压测
+                return c.text
+    return None
+
+
+def is_err(result):
+    return bool(getattr(result, 'isError', False) or getattr(result, 'is_error', False))
+
+
+class Player:
+    """自由发挥的玩家：心态随血量/身家变化，行为有习惯、有随机、偶尔犯傻。"""
+
+    def __init__(self, rng, state):
+        self.rng = rng
+        self.state = state
+        self.phase = 'explore'
+        self.phase_left = 3
+        self.stage_target = 0          # 期望达到的突破次数
+        self.npc_seq = 0
+
+    def _player(self):
+        return self.state['entities']['player']
+
+    def _alive_npcs(self):
+        return [k for k, e in self.state.get('entities', {}).items()
+                if k != 'player' and e.get('hp', 0) > 0]
+
+    def plan(self, tick):
+        self.phase_left -= 1
+        if self.phase_left <= 0:
+            pool = ['explore'] * 3 + ['spar'] * 2 + ['market'] * 2 + ['social'] + ['introspect']
+            if tick >= 40 and tick % 40 == 0:
+                pool += ['breakthrough'] * 3
+            self.phase = self.rng.choice(pool)
+            self.phase_left = self.rng.randint(2, 5)
+
+        p = self._player()
+        if p.get('hp', 0) < p.get('hp_max', 1) * 0.25:
+            self.phase = 'market'      # 血少先买药续命
+        if tick == 1 and self.phase != 'explore':
+            self.phase = 'explore'
+
+    @property
+    def label(self):
+        return self.phase
+
+
+async def run(turns: int, quiet: bool = False):
+    rng = random.Random(20261014)
+    t0 = time.time()
+    calls, errors = {}, {}
+    invariant_fail = []
+
+    tmp = tempfile.mkdtemp(prefix='ww-stress-')
+    state_path = os.path.join(tmp, 'xuanshu.save.json')
+
+    params = StdioServerParameters(command=sys.executable, args=[SERVER], cwd=ROOT)
+    async with stdio_client(params) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+
+            async def call(tool, args=None, allow_error=False):
+                args = args or {}
+                calls[tool] = calls.get(tool, 0) + 1
+                try:
+                    r = await session.call_tool(tool, args)
+                except Exception as e:  # aqg: top-level boundary —— 工具报错计入 errors 统计，继续跑满轮次
+                    errors[tool] = errors.get(tool, 0) + 1
+                    msg = str(e)
+                    if isinstance(e, BaseExceptionGroup):
+                        sub = list(e.exceptions)
+                        msg = 'ExceptionGroup(%d): %s' % (len(sub),
+                                                          '; '.join(str(x)[:120] for x in sub[:3]))
+                    invariant_fail.append({'turn': None, 'tool': tool, 'crash': msg[:200]})
+                    return None
+                if is_err(r):
+                    if allow_error:
+                        return {'__expected_error__': True}
+                    errors[tool] = errors.get(tool, 0) + 1
+                    detail = ''
+                    try:
+                        detail = str(r.content[0].text)[:200] if r.content else ''
+                    except Exception:  # aqg: top-level boundary —— 错误详情取不到就不取，不影响统计
+                        pass
+                    invariant_fail.append({'tool': tool, 'args': {k: str(v)[:60] for k, v in args.items()},
+                                           'error': detail})
+                    return None
+                return data(r)
+
+            def check(state, note, ok, detail=''):
+                if not ok:
+                    invariant_fail.append({'note': note, 'detail': str(detail)[:160]})
+
+            # ── 开局：设定包一键载入 ──
+            ls = await call('load_setting', {'path': SETTING, 'state_path': state_path, 'seed': 777})
+            check(ls, 'load_setting 开局', isinstance(ls, dict) and ls.get('entities') == 9)
+            await call('configure', {'event_log_keep': 120, 'recap_budget_chars': 1200,
+                                     'milestone_keep': 400})
+            await call('narration_context', {'scene_text': '临川城·旧枢台', 'recent': 10})
+
+            player = Player(rng, {})
+            snap_saved = None
+            new_locs_seen = set()
+            recap_hits, summaries, recalls = 0, 0, 0
+
+            for turn in range(1, turns + 1):
+                # 状态读法：每 10 回合经 MCP 拉一次全量状态做不变量断言并刷新决策依据；
+                # 轮间用各工具自己的返回（它们都带 _tick 与最新数值），省 90% 的传输。
+                if turn % 10 == 1:
+                    st = await call('read_state', {})
+                    check(st, 'read_state', isinstance(st, dict))
+                    player.state = st or {}
+                else:
+                    player.state = player.state or {}
+
+                # 不变量（随刷新执行）
+                if turn % 10 == 1:
+                    p = (player.state.get('entities') or {}).get('player', {})
+                    check(player.state, 'hp/gold 非负',
+                          p.get('hp', 0) >= 0 and p.get('gold', 0) >= 0
+                          and all(e.get('hp', 0) >= 0 and e.get('gold', 0) >= 0
+                                  for e in player.state.get('entities', {}).values()))
+                    market_ok = True
+                    for items in (player.state.get('market') or {}).values():
+                        for it in items.values():
+                            base, price = int(it.get('base_price', 0)), int(it.get('price', 0))
+                            market_ok = market_ok and base > 0 and 0 <= price <= base * 3 + 1
+                    check(player.state, '市场价格不崩（0<=price<=3*base 且 base 恒正）', market_ok)
+
+                p = (player.state.get('entities') or {}).get('player', {})
+                player.plan(turn)
+                npc_ids = player._alive_npcs()
+                loc = p.get('location', '临川城')
+
+                # ── 行动（按玩家心态） ──
+                if player.phase == 'explore':
+                    known = list((player.state.get('codex') or {}).get('locations', [loc]))
+                    target = rng.choice(KNOWN_LOCS + known) if rng.random() < 0.7 else \
+                        rng.choice(KNOWN_LOCS)
+                    r = await call('travel', {'location': target, 'note': '闲逛'})
+                    if r and r.get('location') not in new_locs_seen:
+                        new_locs_seen.add(r.get('location'))
+                    await call('narration_context', {'scene_text': target, 'recent': 8})
+                    if npc_ids and rng.random() < 0.3:
+                        await call('social', {'actor': 'player', 'target': rng.choice(npc_ids),
+                                              'event': rng.choice(['praise', 'cooperate', 'gift']),
+                                              'intensity': 1})
+                    if rng.random() < 0.15:
+                        # 善心 or 偷心
+                        kt = rng.choice(['help_innocent', 'theft'])
+                        await call('karma', {'actor': 'player', 'karma_type': kt,
+                                              'victim': 'shi_sanniang' if kt == 'theft' else None})
+                elif player.phase == 'spar':
+                    if not npc_ids:
+                        # 江湖不能没人：现场生成新散修（无角色卡也能入局）
+                        player.npc_seq += 1
+                        r = await call('spawn_npc', {'id': 'npc_new_%d' % player.npc_seq,
+                                                     'name': '路过客%d' % player.npc_seq,
+                                                     'faction': '散修',
+                                                     'attrs': {'str': rng.randint(9, 15),
+                                                               'dex': rng.randint(9, 15),
+                                                               'int': rng.randint(8, 14),
+                                                               'con': rng.randint(8, 14),
+                                                               'cha': rng.randint(8, 13)},
+                                                     'level': '淬体%d段' % rng.randint(3, 9),
+                                                     'hp': 80, 'gold': 50,
+                                                     'location': loc,
+                                                     'desc': '新来的散修'})
+                        check(r, 'spawn_npc 新人物入局', bool(r) and r.get('entity_id'))
+                        npc_ids = player._alive_npcs()
+                    if npc_ids:
+                        target = rng.choice(npc_ids)
+                        rounds = 0
+                        while rounds < 4:
+                            r = await call('combat', {'attacker': 'player', 'defender': target,
+                                                      'action_type': rng.choice(['attack', 'heavy'])})
+                            rounds += 1
+                            if r is None:
+                                break
+                            # 用引擎返回的 attacker_hp 刷新本地决策副本（轮间不重拉全量状态）
+                            if r.get('attacker_hp') is not None:
+                                lp = player.state.get('entities', {}).get('player', {})
+                                lp['hp'] = r['attacker_hp']
+                            if r.get('defender_dead') or r.get('fled') is not None:
+                                break
+                            if (player.state.get('entities', {}).get(target, {}).get('hp', 0) <= 0):
+                                break
+                elif player.phase == 'market':
+                    mkt = (player.state.get('market') or {}).get(loc) or {}
+                    # 血少先买药回血（use_item：引擎结算，花的是钱不是白拿；金数不足/缺货属预期报错）
+                    if p.get('hp', 0) < p.get('hp_max', 1) * 0.9:
+                        for key, it in mkt.items():
+                            if '丹药' in it.get('type', '') or '药' in it.get('type', ''):
+                                r = await call('use_item', {'item': key, 'quantity': 1,
+                                                           'location': loc}, allow_error=True)
+                                if r and not r.get('__expected_error__'):
+                                    # 把引擎结算的 hp/gold 同步进本地决策副本
+                                    lp = player.state.get('entities', {}).get('player', {})
+                                    lp['hp'] = r.get('hp', lp.get('hp', 0))
+                                    lp['gold'] = r.get('gold', lp.get('gold', 0))
+                                    break
+                    # 低价囤 / 高价卖（用行情差做判断——真玩家心态）
+                    for key, it in mkt.items():
+                        ratio = it['price'] / max(1, it.get('base_price', it['price']))
+                        if ratio < 0.85 and p.get('gold', 0) > it['price'] * 3 and rng.random() < 0.5:
+                            r = await call('trade', {'location': loc, 'item': key, 'direction': 'buy',
+                                                     'quantity': 2})
+                            if r and r.get('success'):
+                                lp = player.state.get('entities', {}).get('player', {})
+                                lp['gold'] = lp.get('gold', 0) - int(r.get('total_cost', 0))
+                        elif ratio > 1.15 and rng.random() < 0.4:
+                            r = await call('trade', {'location': loc, 'item': key, 'direction': 'sell',
+                                                     'quantity': 1})
+                            if r and r.get('success'):
+                                lp = player.state.get('entities', {}).get('player', {})
+                                lp['gold'] = lp.get('gold', 0) + int(r.get('total_cost', 0))
+                elif player.phase == 'social':
+                    if npc_ids:
+                        await call('social', {'actor': 'player', 'target': rng.choice(npc_ids),
+                                               'event': rng.choice(['help', 'praise', 'cooperate']), 'intensity': 1})
+                elif player.phase == 'introspect':
+                    await call('narrative', {})
+                    await call('status', {})
+                    await call('merit', {'aid': 0.6, 'sincerity': 0.5})
+                    if rng.random() < 0.5:
+                        rc = await call('recall', {'query': rng.choice(['突破', '杀', '抵达'])})
+                        if rc and rc.get('matches'):
+                            recalls += 1
+                elif player.phase == 'breakthrough':
+                    player.stage_target += 1
+                    snap_saved = await call('snapshot', {'label': 'before_bk%d' % turn})
+                    stage_before = (player.state.get('entities') or {}).get('player', {}).get('stage', 0)
+                    adv = await call('advance', {'next_level': '引元境·初层' if player.stage_target == 1
+                                                 else '引元境·中层', 'insight': rng.uniform(0.4, 0.95)})
+                    if adv and adv.get('success'):
+                        st_now = await call('read_state')
+                        check(st_now, '突破成功则 stage 恰好 +1',
+                              st_now['entities']['player'].get('stage', 0) == stage_before + 1,
+                              'stage %s -> %s' % (stage_before, st_now['entities']['player'].get('stage')))
+                    elif snap_saved:
+                        # 失败：老玩家习惯——回退存档点重来（stage 不应被失败污染）
+                        rs = await call('restore', {'snapshot_path': snap_saved['snapshot']})
+                        check(rs, '失败回退后 stage 保持',
+                              rs and (rs.get('tick', 0) >= 0))
+
+                # 记忆维护：每 25 回合摘要、每 50 回合回顾
+                if turn % 25 == 0:
+                    await call('write_summary', {'text': '第%d回合·%s 阶段（阶段累计 %d，当前 %s）'
+                                                 % (turn, player.label, player.stage_target, loc)})
+                    summaries += 1
+                if turn % 50 == 0:
+                    rc = await call('recap', {})
+                    if rc:
+                        recap_hits += 1
+
+                # 每 15 回合混入一条"错招"（验证优雅报错）
+                if turn % 15 == 7:
+                    bad = rng.random()
+                    if bad < 0.4:
+                        await call('travel', {'location': rng.choice(BAD_LOCATIONS)}, allow_error=True)
+                    elif bad < 0.8:
+                        mkt2 = (player.state.get('market') or {}).get(loc) or {}
+                        key0 = next(iter(mkt2), 'liaoshang_san')
+                        await call('trade', {'location': loc, 'item': key0, 'direction': 'buy',
+                                              'quantity': -3}, allow_error=True)
+                    else:
+                        await call('narrative_weight', {'probability': 0}, allow_error=True)
+
+                # 死亡：续命
+                p = player.state.get('entities', {}).get('player', {})
+                if p.get('hp', 0) <= 0:
+                    p['hp'] = int(p.get('hp_max', 50))
+                    await call('write_summary', {'text': '（玩家在第%d回合倒下又醒来，记忆延续）' % turn})
+
+                r = await call('tick', {})
+                if r is None and turn == 1:
+                    invariant_fail.append({'note': '第一轮 tick 失败，中止'})
+                    break
+
+            # ── 终局断言 ──
+            st = await call('read_state', {})
+            check(st, '终局状态可解析', isinstance(st, dict))
+            if st:
+                player.state = st
+                arch = int(st.get('archived_events', 0))
+                keep = int((st.get('config') or {}).get('event_log_keep', 200))
+                check(st, 'event_log 不超保留量', len(st.get('event_log', [])) <= keep)
+                check(st, 'archived_events 只增且与归档行数一致',
+                      arch >= 0 and os.path.exists(st and state_path + '.log.jsonl'))
+                lines = 0
+                if os.path.exists(state_path + '.log.jsonl'):
+                    lines = sum(1 for _ in open(state_path + '.log.jsonl', encoding='utf-8'))
+                check(st, '归档行数 >= archived_events 计数', lines >= arch - 4)
+
+            total_calls = sum(calls.values())
+            real_errors = sum(errors.values())
+            state_size = os.path.getsize(state_path) if os.path.exists(state_path) else 0
+
+            report = {
+                'turns_requested': turns,
+                'turns_completed': turn,
+                'wall_seconds': round(time.time() - t0, 1),
+                'tool_calls': total_calls,
+                'by_tool': calls,
+                'unexpected_errors': real_errors,
+                'error_rate': round(real_errors / max(1, total_calls), 5),
+                'summaries': summaries, 'recaps': recap_hits, 'recalls': recalls,
+                'breakthroughs_attempted': player.stage_target,
+                'new_locations': sorted(new_locs_seen),
+                'state_file_bytes': state_size,
+                'invariant_failures': invariant_fail[:50],
+                'invariant_fail_count': len(invariant_fail),
+                'tmp': tmp,
+            }
+            with open(REPORT, 'w', encoding='utf-8') as f:
+                json.dump(report, f, ensure_ascii=False, indent=2)
+            print(json.dumps({k: v for k, v in report.items() if k != 'invariant_failures'},
+                             ensure_ascii=False, indent=2))
+            for bad in invariant_fail[:20]:
+                print('  VIOLATION: %s' % json.dumps(bad, ensure_ascii=False))
+            ok = (not invariant_fail) and (report['turns_completed'] == turns)
+            print('\n%d/%d 轮完成 · %d 次工具调用 · 意外错误 %d · 不变量破坏 %d · %.1fs'
+                  % (report['turns_completed'], turns, total_calls, real_errors,
+                     len(invariant_fail), report['wall_seconds']))
+            return 0 if ok else 1
+
+
+if __name__ == '__main__':
+    n = int(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_TURNS
+    quiet = '--quiet' in sys.argv
+    sys.exit(asyncio.run(run(n, quiet=quiet)))

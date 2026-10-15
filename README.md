@@ -42,12 +42,26 @@ pip install -e ".[mcp]"
   · `recap(budget_chars)` 按字符预算给「最新摘要 + 大事记 + 最近事件」
 - **成长闭环**：`advance` 突破——引擎按（洞察/心境/业债/气血）判定成败并落数值后果
   （成功涨上限与属性、失败反噬气血并留心伤），杜绝手改等级
-- 实况面板：`open_panel` 起一个**只读网页**（气血/内力/心流/世界相位/探索图鉴/大事记/编年史/市场行情，
-  状态一变就自动刷新）；玩家记不住的东西——去过哪、见过谁、什么价、发生过什么——都在上面。
-  也可单独跑：`python panel.py --state ww_state.json`
+- **模型层**：`model_list` 查目录、`model(name, params)` 直接按闭式公式出数（经济 Lerner 定价/OU 价格回归、
+  Cobb-Douglas、种群 logistic/Lotka-Volterra、流行病 SIR+R0、风险 Poisson 生存率、热力学松弛、舆论 bounded-confidence 等 16 个），
+  宿主推导效果不再逐事件拍脑袋；市场价格每回合走 OU 均值回归
+- 实况主舞台：`open_panel` 起一个**只读网页**（叙事主舞台 + 气血/内力/心流/世界相位 + 事件时间线 +
+  分级弹窗/提示 + 探索图鉴/市场/大事记抽屉 + 随身物品与人物关系；状态一变自动刷新，SSE 断开自动轮询兜底）
+- **长局态势可视化**：面板内三张离线图表（行藏曲线：气血/内力/钱财随回合；业债与心境；
+  市价偏离基准）＋ 事件谱（危急/警示/顺遂/寻常分布）＋ 人物关系网 ＋ 地点图 ＋ 修行阶段轨 ＋
+  危险/机会徽章；随回合自动累积采样（侧写 `<状态>.viz.jsonl`，不碰状态文件），玩家玩几百轮也能一眼看出趋势
+- **世界观皮肤 + 品牌**：面板按世界自适应 —— 玄枢界(墨金)/水墨/霓虹/通用四套皮肤，含图表配色；
+  设定包或 `world_init` 传 `ui: {skin, accent, motif, brand, tagline}` 即可让新世界自带风格与**自己的名字**
+  （未知皮肤回退通用；规范见 `BRAND.md`）
+- **上手帮助**：顶栏「帮助 ?」含术语表（心流/相位/因果债/物价指数…的人话解释）、图表读法、
+  键盘操作、数据与隐私（状态文件/侧写文件真实路径）、皮肤说明；首次访问给一次引导条，之后不再打扰
+- 使用便利：钱财等大数自动千分位、气血吃紧/业债缠身等徽章、长局人物与关系自动折叠收敛
+- 错误体验：状态缺档/损坏时给可读横幅 + 重试按钮，面板不清屏也不崩
 - 移动与图鉴：`travel` 是唯一能改玩家位置的工具，首次到达自动进图鉴（地点/人物/物品/已触发设定）
 - 回合可回退：`snapshot` / `restore`（引擎状态确定性，回退后重放同种子一致）
-- 端到端自检：`python scripts/verify_mcp_stdio.py`（45 项断言，含酒馆生态/图鉴/面板/设定包/长局与确定性）
+- 端到端自检：`python scripts/verify_mcp_stdio.py`（48 项断言，含酒馆生态/图鉴/面板/设定包/长局/模型层与确定性）
+- 面板契约自检：`python scripts/verify_panel.py`（48 项断言：视图模型契约/旧存档兼容/静态白名单/缺档错误态/品牌/帮助/序列采样）
+- 用户视角试玩：`python scripts/user_playtest.py`（41 项"玩家会不会投诉"检查：卖没有的东西/超量交易/边界输入/报错可读性）
 - 实测：opencode（GLM-5.2）接入后按设定建局、连续结算三个行动，叙事数值与引擎状态文件逐项一致
 - 可复现：开局带 `seed`；每次结算的随机数由状态里的 `rng_seed` 与 `rng_counter` 共同决定，并随状态落盘
 
@@ -84,11 +98,19 @@ python engine.py info_weight --state game_state.json --probability 0.05
 ```
 game_engine/                      # 仓库根即 game_engine 包（导入别名已放开，目录名任意）
 ├── engine.py                     # CLI 入口（14 条命令）
-├── mcp_server.py                 # MCP 服务器（27 个工具；除 mcp>=2 外无额外依赖）
+├── mcp_server.py                 # MCP 服务器（31 个工具；除 mcp>=2 外无额外依赖）
 ├── state_schema.py               # 状态结构 + 辅助函数
 ├── init_game.py                  # 生成示例世界（青云界）
 ├── pyproject.toml                # pip install -e ".[mcp]"；命令 world-walker / world-walker-mcp
-├── scripts/verify_mcp_stdio.py   # MCP 端到端自检（38 项断言，含酒馆生态兼容/图鉴/面板与确定性）
+├── panel.py / panel.html / panel.css / panel.js   # 只读实况主舞台（视图模型 + HTTP/SSE + 前端三件套）
+├── viz_series.py                 # 长局态势侧写（<状态>.viz.jsonl 采样：图表数据源，不碰状态文件）
+├── assets/echarts.min.js         # 离线图表库（Apache-2.0，随包分发，无 CDN 依赖）
+├── BRAND.md                      # 品牌规范（名号/标语/配色/可配置化，单一信源）
+├── ARCHITECTURE.md               # 架构文档（唯一真理源：视图模型契约/不变量/ADR）
+├── scripts/verify_mcp_stdio.py   # MCP 端到端自检（48 项断言，含酒馆生态兼容/图鉴/面板/模型层与确定性）
+├── scripts/verify_panel.py       # 面板契约自检（48 项断言：视图模型契约/旧存档兼容/静态白名单/缺档错误态/品牌/帮助/序列采样）
+├── scripts/user_playtest.py      # 用户视角试玩（41 项"玩家会不会投诉"检查：钻空子/边界/报错可读性）
+├── scripts/stress_freeplay.py    # 自由玩家压力测试（默认 2000 回合，走真实 MCP stdio 通道）
 ├── demo_state.json               # 演示状态
 ├── GAME_MASTER_PROTOCOL.md       # AI Agent 调用协议
 └── rules/                        # 85+ 学术公式（Python 实现）

@@ -34,6 +34,7 @@ EXPECTED_TOOLS = {
     'narration_context', 'character_card_read', 'add_character', 'import_lorebook',
     'snapshot', 'restore', 'travel', 'open_panel', 'load_setting',
     'advance', 'recall', 'write_summary', 'recap', 'configure',
+    'use_item', 'spawn_npc', 'model', 'model_list',
 }
 
 RESULTS = []
@@ -119,7 +120,7 @@ async def main():
             # 1. 工具清单
             tools = await session.list_tools()
             names = {t.name for t in tools.tools}
-            check('tools/list 覆盖全部 21 个工具', names == EXPECTED_TOOLS,
+            check('tools/list 覆盖全部 31 个工具', names == EXPECTED_TOOLS,
                   '缺少: %s' % (EXPECTED_TOOLS - names) if names != EXPECTED_TOOLS else '')
             check('每个工具都有描述', all((t.description or '').strip() for t in tools.tools))
             wi = next(t for t in tools.tools if t.name == 'world_init')
@@ -215,6 +216,23 @@ async def main():
                   isinstance(merit, dict) and merit.get('merit_value') is not None
                   and weight.get('info_weight', 0) > 0,
                   'merit=%s info=%s' % (merit.get('merit_value'), round(weight.get('info_weight', 0), 2)))
+
+            # 11b. 模型层：命名闭式公式直接算效果
+            mlist = data(await session.call_tool('model_list', {}))
+            names = {m['name'] for m in mlist.get('models', [])}
+            lerner = data(await session.call_tool('model', {'name': 'lerner_price',
+                                                            'params': {'cogs': 60, 'elasticity': 2.5}}))
+            ou = data(await session.call_tool('model', {'name': 'ou_price',
+                                                        'params': {'price': 37, 'base': 30, 'theta': 0.15}}))
+            check('model_list 列出命名模型（含 economics/population）',
+                  {'lerner_price', 'ou_price', 'lotka_volterra', 'sir_step',
+                   'logistic_sigmoid'} <= names, '%d 个模型' % len(names))
+            # Lerner: P = 60 * 2.5/1.5 = 100
+            check('model(lerner_price) 按公式出数', abs(lerner.get('value', 0) - 100.0) < 1e-6,
+                  'value=%s formula=%s' % (lerner.get('value'), lerner.get('formula')))
+            # OU: 37 + (-0.15*(37-30)) = 37 - 1.05 = 35.95
+            check('model(ou_price) 均值回归一步', abs(ou.get('value', 0) - 35.95) < 1e-6,
+                  'value=%s' % ou.get('value'))
 
             # 12. world_open 续跑
             reopened = data(await session.call_tool('world_open', {'state_path': state_a}))

@@ -42,11 +42,32 @@ the engine's JSON into prose — it must never invent numbers.
   milestones + recent events under a character budget.
 - **Growth loop**: `advance` — the engine rolls breakthroughs from insight / mind / karma / HP and applies
   the numeric consequences (success raises caps and attrs, failure backlashes HP and leaves a mind scar).
-- Live panel: `open_panel` serves a **read-only dashboard** (HP/MP, flow, world phase, exploration codex,
-  milestones, chronicle, market prices; auto-refreshes). Standalone: `python panel.py --state ww_state.json`
+- **Model layer**: `model_list` / `model(name, params)` evaluate 16 named closed-form models directly
+  (Lerner pricing / OU price reversion, Cobb-Douglas, logistic & Lotka-Volterra populations, SIR + R0,
+  Poisson survival, thermal relaxation, bounded-confidence opinion dynamics, …). Market prices mean-revert
+  via the OU model every tick — hosts derive effects from formulas instead of ad-hoc reasoning.
+- Live stage: `open_panel` serves a **read-only stage** (narrative panel + HP/MP/flow/world phase + event
+  timeline + graded dialogs/toasts + drawers for codex / market / milestones + inventory & relations;
+  auto-refreshes via SSE with polling fallback, and shows a readable banner + retry when the save is
+  missing). Standalone: `python panel.py --state ww_state.json`
+- **Long-run telemetry visuals**: three offline charts (vitals/gold over turns; karma & affinity;
+  price index vs baseline) + an event spectrum + a relationship network + a locations map +
+  a cultivation stage track + danger/opportunity badges. Samples accumulate per turn into a sidecar
+  (`<state>.viz.jsonl`, never touching the save file) so hundreds of turns stay readable at a glance.
+- **World skins & branding**: the stage adapts to the setting — xuanshu (ink & gold) / ink / neon / neutral,
+  including chart palettes; a setting bundle or `world_init` can pass
+  `ui: {skin, accent, motif, brand, tagline}` so a new world ships its own look **and its own name**
+  (unknown ids fall back to neutral; spec in `BRAND.md`).
+- **Onboarding help**: a top-bar Help (`?`) dialog with a plain-language glossary (flow, panarchy phase,
+  karma, price index, …), how to read each chart, keyboard controls, data & privacy (real state/sidecar
+  paths) and skin notes; first-time visitors get a one-shot guidance strip.
+- Convenience: thousands separators for large numbers, low-HP / karma badges, and automatic
+  collapsing of long-run cast & relation lists.
 - Travel & codex: `travel` is the only tool that moves the player; first arrival enters the codex
 - Deterministic undo: `snapshot` / `restore`
-- End-to-end self-check: `python scripts/verify_mcp_stdio.py` (45 assertions, including ecosystem / codex / panel / settings / long game / determinism)
+- End-to-end self-check: `python scripts/verify_mcp_stdio.py` (48 assertions, including ecosystem / codex / panel / settings / long game / model layer / determinism)
+- Panel contract self-check: `python scripts/verify_panel.py` (48 assertions: view-model contract / legacy saves / static whitelist / missing-save banner / brand / help / series sampling)
+- User-perspective playtest: `python scripts/user_playtest.py` (41 checks a real player would raise — money-minting exploits, boundary inputs, readable refusals)
 - Field-tested: opencode (GLM-5.2) builds a world from the setting and settles three actions in a row;
   its narration matches the engine's state file item by item
 - Reproducible: pass `seed` at world_init; every settlement seeds its RNG from the state's
@@ -85,11 +106,19 @@ python engine.py info_weight --state game_state.json --probability 0.05
 ```
 game_engine/                      # the repo root IS the game_engine package (any folder name works)
 ├── engine.py                     # CLI entry (14 commands)
-├── mcp_server.py                 # MCP server (27 tools; only extra dep is mcp>=2)
+├── mcp_server.py                 # MCP server (31 tools; only extra dep is mcp>=2)
 ├── state_schema.py               # State schema + helpers
 ├── init_game.py                  # Writes the sample world (青云界)
 ├── pyproject.toml                # pip install -e ".[mcp]"; commands world-walker / world-walker-mcp
-├── scripts/verify_mcp_stdio.py   # MCP end-to-end self-check (38 assertions, including ecosystem compat / codex / panel / determinism)
+├── panel.py / panel.html / panel.css / panel.js   # read-only live stage (view model + HTTP/SSE + web UI)
+├── viz_series.py                 # long-run telemetry sidecar (<state>.viz.jsonl; chart data, never touches the save)
+├── assets/echarts.min.js         # offline chart library (Apache-2.0, shipped with the package, no CDN)
+├── BRAND.md                      # brand spec (name / tagline / palette / configurability; single source)
+├── ARCHITECTURE.md               # architecture doc (single source of truth: view-model contract / invariants / ADRs)
+├── scripts/verify_mcp_stdio.py   # MCP end-to-end self-check (48 assertions, including ecosystem compat / codex / panel / model layer / determinism)
+├── scripts/verify_panel.py       # panel contract self-check (48 assertions: view model / legacy saves / static whitelist / missing-save banner / brand / help / series sampling)
+├── scripts/user_playtest.py      # user-perspective playtest (41 "would a player complain?" checks: exploits / edges / error readability)
+├── scripts/stress_freeplay.py    # free-player stress test (default 2000 turns, real MCP stdio channel)
 ├── demo_state.json               # Demo game state
 ├── GAME_MASTER_PROTOCOL.md       # AI Agent call protocol
 └── rules/                        # 85+ academic formulas as Python

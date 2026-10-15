@@ -112,8 +112,22 @@ def add_karma(state, debtor, creditor, ktype, amount):
         "tick": state["tick"],
         "settled": False
     }
-    state["karma_ledger"].append(entry)
+    ledger = state.setdefault("karma_ledger", [])
+    ledger.append(entry)
+    cap = int((state.get("config") or {}).get("karma_ledger_keep", 500))
+    _prune_settled(state, ledger, cap)
     return entry
+
+def _prune_settled(state, ledger, cap):
+    """结算完毕的业债条目不再被任何读取器使用（get_unsettled_karma 已过滤），
+    超保留量时从最旧的开始裁，防止长局无界增长。"""
+    if len(ledger) <= cap:
+        return
+    settled = [i for i, e in enumerate(ledger) if e.get("settled")]
+    for i in sorted(settled, reverse=True):
+        if len(ledger) <= cap:
+            break
+        del ledger[i]
 
 def get_unsettled_karma(state, entity):
     """获取某实体未偿还的因果债总额"""
@@ -124,8 +138,11 @@ def get_unsettled_karma(state, entity):
 
 def log_event(state, etype, desc):
     """记录事件到日志"""
-    state["event_log"].append({
-        "tick": state["tick"],
+    log = state.get("event_log")
+    if not isinstance(log, list):
+        log = state["event_log"] = []
+    log.append({
+        "tick": state.get("tick", 0),
         "type": etype,
         "desc": desc
     })

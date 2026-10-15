@@ -8,8 +8,25 @@ __pycache__/
 __pycache__/
 *.py[cod]
 *.egg-info/
+build/
+dist/
 
 # Runtime state (_player save files_)
 game_state.json
 ww_state.json
+ww_live.json
+ww_smoke.json
+ww_viz.json
+ww_brand.json
 *.save.json
+
+# Browser smoke screenshots (scripts/_shots)
+scripts/_shots/
+
+# Panel telemetry sidecar (long-run samples)
+*.viz.jsonl
+
+# Stress test artifacts
+scripts/last_stress_report.json
+err*.log
+.aqg/

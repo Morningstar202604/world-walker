@@ -14,6 +14,23 @@
 
 from game_engine.state_schema import add_karma, get_unsettled_karma
 
+# 叙事文本用中文标签（这些事件会进编年史与面板时间线，英文枚举会直接漏给玩家）
+KARMA_LABELS = {
+    "murder_innocent": "杀害无辜",
+    "murder_evil": "诛杀恶人",
+    "theft": "偷窃",
+    "lie": "说谎",
+    "betray": "背叛",
+    "help_innocent": "助人",
+    "help_evil": "助纣为虐",
+    "repay_debt": "还债",
+    "oath_broken": "誓约违背",
+    "minor_insult": "轻慢失礼",
+    "major_betrayal": "背信弃义",
+    "save_life": "救人性命",
+    "mass_murder": "大开杀戒",
+}
+
 def resolve_karma(state, actor_id, victim_id=None, action_type="normal"):
     """
     基于行动类型计业
@@ -68,11 +85,11 @@ def resolve_karma(state, actor_id, victim_id=None, action_type="normal"):
     if delta > 0 and victim_id:
         # 添加债务条目
         add_karma(state, actor_id, victim_id, action_type, delta)
-        result["events"].append(f"{actor_name}因{action_type}背负{delta}业")
+        result["events"].append(f"{actor_name}因{KARMA_LABELS.get(action_type, action_type)}背负{delta}业")
     elif delta < 0:
         # 消业: 寻找未偿还的 karma 条目并部分结算
         _settle_karma(state, actor_id, abs(delta))
-        result["events"].append(f"{actor_name}因{action_type}消除{abs(delta)}业")
+        result["events"].append(f"{actor_name}因{KARMA_LABELS.get(action_type, action_type)}消除{abs(delta)}业")
     
     total = get_unsettled_karma(state, actor_id)
     result["total_unsettled"] = total

@@ -3,227 +3,255 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>万界·行者 · 实况</title>
-<style>
-  :root{
-    --bg:#0e1014; --panel:#161a21; --panel2:#1c222b; --line:#2a313d;
-    --gold:#e8b04b; --gold-dim:#8a6a2c; --text:#e8e6e1; --dim:#949cab;
-    --hp:#d9534f; --mp:#4a90d9; --ok:#5cb85c; --warn:#e0a03a;
-  }
-  *{box-sizing:border-box;margin:0;padding:0}
-  body{background:var(--bg);color:var(--text);font:14px/1.6 "Noto Sans SC","Microsoft YaHei",system-ui,sans-serif;padding:18px}
-  header{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:14px}
-  h1{font-size:20px;color:var(--gold);font-weight:600}
-  .sub{color:var(--dim);font-size:13px}
-  .live{margin-left:auto;display:flex;align-items:center;gap:8px;color:var(--dim);font-size:12px}
-  .dot{width:9px;height:9px;border-radius:50%;background:var(--ok);box-shadow:0 0 8px var(--ok)}
-  .dot.stale{background:var(--warn);box-shadow:0 0 8px var(--warn)}
-  .grid{display:grid;grid-template-columns:340px 1fr 380px;gap:14px;align-items:start}
-  @media(max-width:1220px){.grid{grid-template-columns:1fr 1fr}}
-  @media(max-width:820px){.grid{grid-template-columns:1fr}}
-  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:14px}
-  .card h2{font-size:13px;color:var(--gold);letter-spacing:.06em;font-weight:600;margin-bottom:10px;border-bottom:1px dashed var(--line);padding-bottom:6px}
-  .row{display:flex;justify-content:space-between;gap:10px;padding:3px 0}
-  .row .k{color:var(--dim)}
-  .barwrap{height:9px;background:#0a0c10;border-radius:5px;overflow:hidden;margin:4px 0 8px}
-  .bar{height:100%;border-radius:5px;transition:width .5s}
-  .bar.hp{background:linear-gradient(90deg,#a33,#d9534f)}
-  .bar.mp{background:linear-gradient(90deg,#2d5b8c,#4a90d9)}
-  .chip{display:inline-block;background:var(--panel2);border:1px solid var(--line);border-radius:20px;padding:2px 10px;margin:2px 4px 2px 0;font-size:12px;color:var(--text)}
-  .chip.gold{border-color:var(--gold-dim);color:var(--gold)}
-  .chip.dim{color:var(--dim)}
-  .cast{border-left:3px solid var(--gold-dim);padding:2px 0 2px 9px;margin:8px 0}
-  .cast b{color:var(--gold)}
-  .cast .d{color:var(--dim);font-size:12px}
-  .chronicle{max-height:340px;overflow:auto;font-size:13px}
-  .chronicle li{list-style:none;border-bottom:1px dotted var(--line);padding:6px 0;display:flex;gap:8px}
-  .chronicle .t{color:var(--gold-dim);flex:0 0 44px;font-variant-numeric:tabular-nums}
-  .chronicle .y{flex:0 0 62px;color:var(--dim);font-size:12px}
-  table{width:100%;border-collapse:collapse;font-size:13px}
-  td,th{padding:3px 4px;text-align:left;border-bottom:1px dotted var(--line)}
-  th{color:var(--dim);font-weight:500;font-size:12px}
-  .up{color:var(--hp)} .down{color:var(--ok)} .flat{color:var(--dim)}
-  .kv{display:flex;flex-wrap:wrap;gap:6px}
-  .moral i{display:inline-block;width:14px;text-align:center;font-style:normal;font-size:12px;color:var(--dim)}
-  .moral b{display:inline-block;font-weight:600;margin-right:8px}
-  .empty{color:var(--dim);font-size:12px}
-  .hint{color:var(--dim);font-size:12px;margin-top:6px}
-  code{color:var(--gold);background:#0a0c10;padding:1px 5px;border-radius:4px;font-size:12px}
-</style>
+<meta name="description" content="万界·行者 · 实况主舞台：只读展示对局状态、事件时间线与分级反馈。" />
+<meta name="theme-color" content="#0d0f13" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230d0f13'/%3E%3Ctext x='16' y='22.5' font-size='17' text-anchor='middle' fill='%23e8b04b' font-family='serif'%3E%E8%A1%8C%3C/text%3E%3C/svg%3E" />
+<title>万界·行者 · 实况主舞台</title>
+<link rel="stylesheet" href="/panel.css" />
 </head>
-<body>
-<header>
-  <h1 id="world">万界·行者</h1>
-  <span class="sub" id="era"></span>
-  <span class="sub" id="tick">回合 —</span>
-  <span class="live"><span class="dot" id="dot"></span><span id="upd">连接中…</span></span>
+<body data-skin="neutral">
+
+<header class="topbar">
+  <div class="brand">
+    <span class="seal" aria-hidden="true">行</span>
+    <div class="brandtext">
+      <h1 class="wordmark">万界·行者</h1>
+      <span class="tagline">万界为卷 · 因果为墨</span>
+    </div>
+  </div>
+  <span class="meta" id="world">—</span>
+  <span class="meta" id="era"></span>
+  <span class="meta" id="tick">回合 —</span>
+  <span class="meta" id="clock">—</span>
+  <span class="spacer"></span>
+  <span class="conn" id="conn" data-state="connecting" role="status" aria-live="polite">
+    <span class="dot" aria-hidden="true"></span><span id="conn-text">连接中…</span>
+  </span>
+  <button class="tbtn" id="help-btn" type="button" title="帮助与术语（快捷键 ?）"
+          aria-haspopup="dialog">帮助 <kbd>?</kbd></button>
+  <button class="tbtn" id="motion" type="button" aria-pressed="false"
+          title="暂停/恢复界面动效">动效：开</button>
 </header>
 
-<div class="grid">
-  <div>
-    <div class="card">
-      <h2>玩家</h2>
+<div class="guide" id="guide" hidden>
+  <span id="guide-text">第一次来？这块是<b>只读实况主舞台</b>——你玩你的，它跟着变：左侧是行者的身家状态，
+    中间是叙事与编年史、三张长局趋势图，右侧是人物关系与地点。按 <kbd>?</kbd> 看术语与读图说明。</span>
+  <button class="tbtn" id="guide-close" type="button">知道了</button>
+</div>
+
+<div class="notice" id="notice" role="alert" hidden>
+  <span id="notice-text"></span>
+  <button class="tbtn" id="notice-retry" type="button">重试</button>
+</div>
+
+<main class="stage">
+  <!-- 左：玩家 HUD -->
+  <aside class="hud" aria-label="玩家状态">
+    <section class="card">
+      <h2>行者 <span class="tag" id="pname-sub"></span></h2>
       <div class="row"><span class="k">名号</span><b id="pname">—</b></div>
       <div class="row"><span class="k">境界</span><span id="plevel">—</span></div>
       <div class="row"><span class="k">所在</span><span id="ploc">—</span></div>
-      <div class="row"><span class="k">气血 <span id="phpn"></span></span><span id="pgold">—</span></div>
-      <div class="barwrap"><div class="bar hp" id="phpbar" style="width:0"></div></div>
+      <div class="badges" id="badges"></div>
+      <div class="row"><span class="k">气血 <span id="phpn"></span> <span class="chip bad" id="hpwarn" hidden>气血吃紧</span></span><span id="pgold">—</span></div>
+      <div class="barwrap" role="img" aria-label="气血条"><div class="bar hp" id="phpbar" style="width:0"></div></div>
       <div class="row"><span class="k">内力 <span id="pmpn"></span></span></div>
-      <div class="barwrap"><div class="bar mp" id="pmpbar" style="width:0"></div></div>
+      <div class="barwrap" role="img" aria-label="内力条"><div class="bar mp" id="pmpbar" style="width:0"></div></div>
       <div class="kv" id="pattrs"></div>
-    </div>
-    <div class="card">
+    </section>
+
+    <section class="card">
       <h2>状态 · 引擎推导</h2>
       <div class="row"><span class="k">心流</span><span id="flow">—</span></div>
       <div class="row"><span class="k">世界相位</span><span id="phase">—</span></div>
       <div class="row"><span class="k">未清因果债</span><span id="karma">—</span></div>
       <div class="moral" id="moral"></div>
       <div class="hint">心流偏低时适合安排缓冲剧情；相位决定大事件的烈度。</div>
-    </div>
-  </div>
+    </section>
 
-  <div>
-    <div class="card">
-      <h2>在场</h2>
-      <div id="present" class="empty">—</div>
-      <div id="others" class="hint"></div>
+    <section class="card">
+      <h2>随身 <span class="tag" id="inv-count"></span></h2>
+      <div class="kv" id="inventory"><span class="empty">（空手）</span></div>
+    </section>
+  </aside>
+
+  <!-- 中：叙事主舞台 -->
+  <section class="narrative" aria-label="叙事主舞台">
+    <div class="scene">
+      <div class="scene-head">
+        <h2 id="scene-title">未开幕</h2>
+        <span class="mood" id="scene-mood" data-mood="neutral" hidden></span>
+      </div>
+      <p id="scene-desc" class="empty">等待状态文件…</p>
+      <div class="focus" id="scene-focus" hidden></div>
     </div>
-    <div class="card">
-      <h2>探索图鉴 <span class="sub" id="lorecnt"></span></h2>
+
+    <section class="card">
+      <h2>编年史 <span class="tag" id="timeline-hint"></span>
+        <button class="tbtn" id="jump-latest" type="button" style="margin-left:auto">跳到最新</button>
+      </h2>
+      <ul class="timeline" id="timeline" aria-live="polite" aria-label="事件时间线">
+        <li class="empty">暂无事件</li>
+      </ul>
+    </section>
+
+    <!-- 长局态势：随回合累积的三张图（离线 ECharts，缺失时降级为文案） -->
+    <section class="card">
+      <h2>行藏曲线 <span class="tag" id="chart1-hint">气血 / 内力 / 钱财 · 随回合</span></h2>
+      <div class="chart" id="chart1" role="img" aria-label="气血内力钱财随回合变化曲线"></div>
+      <div class="chart-empty" id="chart1-empty" hidden>还没有足够的回合样本——推进几个回合后这里会画出行藏曲线。</div>
+    </section>
+    <div class="chart-row">
+      <section class="card">
+        <h2>业债与心境 <span class="tag">未清业债 · 人情均值</span></h2>
+        <div class="chart chart-sm" id="chart2" role="img" aria-label="未清业债与人情均值随回合变化"></div>
+        <div class="chart-empty" id="chart2-empty" hidden>暂无样本。</div>
+      </section>
+      <section class="card">
+        <h2>市价偏离 <span class="tag">1.0 = 基准</span></h2>
+        <div class="chart chart-sm" id="chart3" role="img" aria-label="物价指数偏离基准的走势"></div>
+        <div class="chart-empty" id="chart3-empty" hidden>暂无样本。</div>
+      </section>
+    </div>
+    <section class="card">
+      <h2>事件谱 <span class="tag" id="spectrum-hint"></span></h2>
+      <div class="spectrum" id="spectrum" aria-label="按类型的事件分布"></div>
+    </section>
+  </section>
+
+  <!-- 右：在场 + 关系 + 世界网格 -->
+  <aside class="cast" aria-label="在场角色与关系">
+    <section class="card">
+      <h2>在场 <span class="tag" id="present-count"></span></h2>
+      <div id="present"><span class="empty">此刻无人</span></div>
+      <div id="others" class="hint"></div>
+    </section>
+    <section class="card">
+      <h2>人情关系 <span class="tag" id="rel-count"></span></h2>
+      <div id="relations" class="kv"><span class="empty">（尚未结缘）</span></div>
+      <div class="relnet" id="relnet" role="img" aria-label="人物关系网：中心为玩家，四周为已结缘人物"></div>
+    </section>
+    <section class="card">
+      <h2>境地 <span class="tag" id="map-hint"></span></h2>
+      <div class="mapnet" id="mapnet" role="img" aria-label="地点分布：当前所在地高亮，连线表示已走动过的路线"></div>
+      <div class="hint" id="map-legend"></div>
+    </section>
+    <section class="card">
+      <h2>修行轨 <span class="tag" id="stage-hint"></span></h2>
+      <div class="track" id="stage-track"></div>
+    </section>
+  </aside>
+</main>
+
+<!-- 抽屉：图鉴 / 市场 / 大事记 / 世界标记 -->
+<div class="drawers">
+  <details class="drawer" id="drawer-codex">
+    <summary>探索图鉴 <span class="tag" id="lorecnt" style="margin-left:auto"></span></summary>
+    <div class="body">
       <div class="row"><span class="k">已探索地点</span></div><div class="kv" id="cx-loc"></div>
       <div class="row"><span class="k">已遇见人物</span></div><div class="kv" id="cx-people"></div>
       <div class="row"><span class="k">经手物品</span></div><div class="kv" id="cx-items"></div>
       <div class="row"><span class="k">已触发设定</span></div><div class="kv" id="cx-lore"></div>
     </div>
-    <div class="card">
-      <h2>大事记 <span class="sub" id="memhint"></span></h2>
-      <ul class="chronicle" id="milestones" style="max-height:150px"><li class="empty">暂无</li></ul>
-    </div>
-    <div class="card">
-      <h2>编年史</h2>
-      <ul class="chronicle" id="chronicle"><li class="empty">暂无事件</li></ul>
-    </div>
-  </div>
+  </details>
 
-  <div>
-    <div class="card">
-      <h2>市场行情</h2>
-      <div id="market" class="empty">—</div>
-      <div class="hint">▲ 高于基准价（买入不划算）· ▼ 低于基准价（可囤）</div>
-    </div>
-    <div class="card">
-      <h2>世界标记</h2>
+  <details class="drawer" id="drawer-market">
+    <summary>市场行情 <span class="tag" style="margin-left:auto">▲高于基准 · ▼低于基准</span></summary>
+    <div class="body"><div id="market"><span class="empty">此界无市</span></div></div>
+  </details>
+
+  <details class="drawer" id="drawer-milestones">
+    <summary>大事记 <span class="tag" id="memhint" style="margin-left:auto"></span></summary>
+    <div class="body"><ul class="timeline" id="milestones" style="max-height:220px"><li class="empty">暂无</li></ul></div>
+  </details>
+
+  <details class="drawer" id="drawer-flags">
+    <summary>世界标记</summary>
+    <div class="body">
       <div class="kv" id="flags"></div>
-      <div class="hint">状态文件一变，本页自动刷新；面板只读，不会改动对局。</div>
+      <div class="hint">面板只读：状态文件一变，本页自动刷新，不会改动对局。</div>
     </div>
-  </div>
+  </details>
 </div>
 
-<script>
-const $ = (id) => document.getElementById(id);
-const pct = (a, b) => Math.max(0, Math.min(100, b > 0 ? a * 100 / b : 0));
+<div class="toasts" id="toasts" aria-live="polite" aria-atomic="false"></div>
 
-function fmtFlow(f) {
-  if (!f || f.state === undefined) return '—';
-  const m = { anxiety: '焦虑', flow: '心流', boredom: '无聊', unknown: '—' };
-  return (m[f.state] || f.state) + (f.adjustment !== undefined ? `（${f.adjustment > 0 ? '+' : ''}${f.adjustment}）` : '');
-}
-function fmtPhase(p) {
-  if (!p) return '—';
-  if (typeof p === 'string') return p;
-  const ph = p.phase || p.current || p.name;
-  return ph ? `${ph}${p.capital !== undefined ? ` · 资本 ${p.capital}` : ''}` : JSON.stringify(p).slice(0, 40);
-}
-function fmtIdentity(i) {
-  if (!i || typeof i !== 'object') return '';
-  const top = Object.entries(i).filter(([, v]) => typeof v === 'number').sort((a, b) => b[1] - a[1]).slice(0, 2);
-  return top.map(([k, v]) => `${k} ${typeof v === 'number' ? v.toFixed(2) : v}`).join(' · ');
-}
-function chips(el, arr, cls) {
-  const a = Array.isArray(arr) ? arr : [];
-  el.innerHTML = a.length ? a.map((x) => `<span class="chip ${cls || ''}">${x}</span>`).join('')
-                          : '<span class="empty">（还没有）</span>';
-}
+<dialog class="eventdlg" id="eventdlg" aria-labelledby="dlg-title">
+  <h3 id="dlg-title"><span id="dlg-icon" aria-hidden="true"></span><span id="dlg-title-text">事件</span></h3>
+  <div class="dlg-meta" id="dlg-meta"></div>
+  <p id="dlg-desc"></p>
+  <div class="dlg-actions">
+    <button type="button" id="dlg-close">知道了（Esc）</button>
+    <button type="button" class="primary" id="dlg-ok">继续</button>
+  </div>
+</dialog>
 
-function render(v) {
-  $('world').textContent = `${v.world.name || '未命名世界'}`;
-  $('era').textContent = `${v.world.era || ''}${v.seed !== undefined ? ' · seed ' + v.seed : ''}`;
-  $('tick').textContent = `回合 ${v.tick}`;
-  $('upd').textContent = `更新于 ${v.updated_at}`;
+<dialog class="helpdlg" id="helpdlg" aria-labelledby="help-title">
+  <h3 id="help-title">帮助 · 读这块面板</h3>
 
-  const p = v.player;
-  $('pname').textContent = p.name; $('plevel').textContent = p.level || '—';
-  $('ploc').textContent = p.location || '—';
-  $('phpn').textContent = `${p.hp}/${p.hp_max}`;
-  $('pmpn').textContent = `${p.mp}/${p.mp_max}`;
-  $('pgold').textContent = `钱财 ${p.gold}`;
-  $('phpbar').style.width = pct(p.hp, p.hp_max) + '%';
-  $('pmpbar').style.width = pct(p.mp, p.mp_max || 1) + '%';
-  $('pattrs').innerHTML = Object.entries(p.attrs || {}).map(([k, x]) => `<span class="chip dim">${k} ${x}</span>`).join('');
+  <section class="help-sec">
+    <h4>这是什么</h4>
+    <p>一局由规则引擎结算的文字互动游戏，这块面板是它的<b>只读</b>实况主舞台——
+      显示的是状态文件里真实的结果。你（玩家）和对局助手在别处行动，面板只跟着变，
+      不会改对局，也不会替你掷骰子。</p>
+  </section>
 
-  const ins = v.insights || {};
-  $('flow').textContent = fmtFlow(ins.flow);
-  $('phase').textContent = fmtPhase(ins.phase);
-  const idn = fmtIdentity(ins.identity);
-  $('phase').title = idn;
-  $('karma').innerHTML = v.karma > 0 ? `<b style="color:var(--hp)">${v.karma}</b>` : '0';
-  $('moral').innerHTML = v.moral.dims.map((d, i) =>
-    `<b>${d}</b><i>${(v.moral.values[i] ?? 0) > 0 ? '+' + v.moral.values[i] : (v.moral.values[i] ?? 0)}</i>`).join('');
+  <section class="help-sec" id="help-glossary">
+    <h4>术语表 <span class="tag">引擎概念的人话版</span></h4>
+    <dl>
+      <dt>气血 / 内力</dt><dd>生命与可消耗的爆发资源。气血低于三成会亮起"气血吃紧"。</dd>
+      <dt>钱财</dt><dd>本世界的货币（玄晶/灵石/信用点…由设定决定）。买入会增加，卖出会回归。</dd>
+      <dt>心流（flow）</dt><dd>战斗难度的舒适度：赢得太容易会"无聊"，输太多会"焦虑"，正好在挑战区才叫心流。</dd>
+      <dt>世界相位（Panarchy）</dt><dd>世界所处的阶段：增长 / 保护 / 崩溃释放 / 重组。大事件的烈度跟着它走。</dd>
+      <dt>未清因果债</dt><dd>你做过的"业"（杀人、偷窃…）累积的债。债越重，突破成功率被压得越低。</dd>
+      <dt>修行阶段（stage）</dt><dd>本次突破的次数进度。到上限后不再增长——该换更强的对手或更远的世界了。</dd>
+      <dt>物价指数</dt><dd>全市场"当前价 ÷ 基准价"的均值。1.0 是正常，越低越适合囤货。</dd>
+      <dt>心意（亲密 / 敬重）</dt><dd>人物关系两维：喜欢你和怕你/服你，是两码事。</dd>
+      <dt>探索图鉴</dt><dd>去过的地方、见过的人、经手的物、触发过的设定——你自己不用记。</dd>
+    </dl>
+  </section>
 
-  $('present').innerHTML = v.present.length ? v.present.map((c) =>
-    `<div class="cast"><b>${c.name}</b> <span class="d">${c.level || ''}${c.hp_max ? ` · ${c.hp}/${c.hp_max}` : ''}</span>
-     ${c.desc ? `<div class="d">${c.desc}</div>` : ''}</div>`).join('') : '<span class="empty">此刻无人</span>';
-  $('others').textContent = v.others.length ? '别处：' + v.others.map((o) => `${o.name}(${o.location || '?'})`).join('、') : '';
+  <section class="help-sec">
+    <h4>图表怎么读</h4>
+    <ul>
+      <li><b>行藏曲线</b>：气血/内力按百分比看左轴，钱财看右轴（虚线）。陡降常是打架与突破的代价。</li>
+      <li><b>业债与心境</b>：柱是未清业债，线是人情均值。杀人偷窃柱会跳，帮人还债会回落。</li>
+      <li><b>市价偏离</b>：贴着基准线 1.0 走动；明显低于基准＝本地有折价货。</li>
+      <li><b>事件谱</b>：最近事件按危急/警示/顺遂/寻常分档，看得出这段是太平还是多事。</li>
+    </ul>
+  </section>
 
-  chips($('cx-loc'), v.codex.locations, 'gold');
-  chips($('cx-people'), v.codex.people);
-  chips($('cx-items'), v.codex.items);
-  chips($('cx-lore'), v.codex.lore, 'dim');
-  $('lorecnt').textContent = `设定词条 ${v.lore_total} 条`;
+  <section class="help-sec">
+    <h4>键盘 <span id="help-keys" class="tag">keyboard</span></h4>
+    <ul>
+      <li><kbd>?</kbd> 打开/关闭本帮助；<kbd>Esc</kbd> 关闭任何弹窗（焦点会回到你原来待的控件）。</li>
+      <li><kbd>Tab</kbd> 在控件间移动；抽屉与按钮都可用 <kbd>Enter</kbd>/<kbd>Space</kbd> 展开。</li>
+      <li>顶栏「动效：开/关」可暂停所有过渡动画（系统级"减少动态效果"也会自动生效）。</li>
+    </ul>
+  </section>
 
-  $('chronicle').innerHTML = v.chronicle.length ? v.chronicle.map((e) =>
-    `<li><span class="t">${e.tick ?? ''}</span><span class="y">${e.type || ''}</span><span>${e.desc || ''}</span></li>`).join('')
-    : '<li class="empty">暂无事件</li>';
+  <section class="help-sec">
+    <h4>数据与隐私</h4>
+    <ul>
+      <li>状态文件：<code id="help-state-path">—</code>（对局的唯一权威，一切数值以它为准）</li>
+      <li>趋势侧写：<code id="help-sidecar-path">—</code>（面板自己的采样账本，删了只丢曲线，不伤对局）</li>
+      <li>面板只监听本机 <code>127.0.0.1</code>，不向任何外部服务发送数据。</li>
+    </ul>
+  </section>
 
-  $('market').innerHTML = v.market.length ? v.market.map((m) =>
-    `<div class="row"><span class="k">${m.location}${m.location === p.location ? '（本地）' : ''}</span></div>
-     <table><tr><th>物品</th><th>价</th><th>基准</th><th>库存</th></tr>
-     ${m.items.map((it) => {
-        const cls = it.delta > 0 ? 'up' : (it.delta < 0 ? 'down' : 'flat');
-        const sym = it.delta > 0 ? '▲' : (it.delta < 0 ? '▼' : '＝');
-        return `<tr><td>${it.name}</td><td class="${cls}">${it.price} ${sym}</td><td>${it.base_price}</td><td>${it.supply}</td></tr>`;
-     }).join('')}</table>`).join('') : '<span class="empty">此界无市</span>';
+  <section class="help-sec">
+    <h4>皮肤与品牌 <span class="tag">换世界就换样子</span></h4>
+    <p>当前皮肤：<b id="help-skin">—</b>。皮肤由设定包 / <code>world_init</code> 的
+      <code>ui</code> 字段决定（<code>core: xuanshu / ink / neon / neutral</code>，可加
+      <code>accent</code> 主色与 <code>motif</code> 风格文案）。换世界无需改代码，面板自动适配。</p>
+  </section>
 
-  $('milestones').innerHTML = (v.milestones || []).length
-    ? v.milestones.map((m) => `<li><span>${m}</span></li>`).join('') : '<li class="empty">暂无</li>';
-  $('memhint').textContent = `摘要 ${v.summaries ?? 0} 条 · 已归档事件 ${v.archived_events ?? 0} 条`;
-  chips($('flags'), v.flags, 'dim');
-}
+  <div class="dlg-actions">
+    <button type="button" class="primary" id="help-close">知道了（Esc）</button>
+  </div>
+</dialog>
 
-let lastAt = 0;
-function markLive(ok) {
-  lastAt = Date.now();
-  const d = $('dot');
-  d.classList.toggle('stale', !ok);
-}
-function boot() {
-  fetch('/state').then((r) => r.json()).then((v) => { render(v); markLive(true); }).catch(() => markLive(false));
-  fetch('/state').then((r) => r.json()).then((v) => { render(v); markLive(true); }).catch(() => markLive(false));
-  if (window.EventSource) {
-    const es = new EventSource('/events');
-    es.addEventListener('state', (ev) => {
-      try { render(JSON.parse(ev.data)); markLive(true); } catch (e) { }
-    });
-    es.onerror = () => { markLive(false); };
-  }
-  setInterval(() => {
-    if (Date.now() - lastAt > 4000) {   // SSE 断了就退回轮询
-      fetch('/state').then((r) => r.json()).then((v) => { render(v); markLive(true); }).catch(() => markLive(false));
-    }
-  }, 2000);
-  setInterval(() => { if (Date.now() - lastAt > 8000) $('dot').classList.add('stale'); }, 3000);
-}
-boot();
-</script>
+<script src="/assets/echarts.min.js"></script>
+<script src="/panel.js"></script>
 </body>
 </html>
