@@ -43,4 +43,6 @@ game_engine = [
   "BRAND.md",
   "ARCHITECTURE.md",
   "GAME_MASTER_PROTOCOL.md",
+  "docs/screenshots/*.png",
+  "docs/screenshots/*.md",
 ]

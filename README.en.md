@@ -10,6 +10,24 @@ Keywords: `AI text adventure` `interactive fiction engine` `emergent narrative` 
 
 ---
 
+## Screenshots
+
+The live stage (opened by `open_panel`) — read-only, offline-capable; world skins, long-run curves and
+event feedback all live on this one page. All shots below are **real renders** (2000-turn demo save, not mockups):
+
+| Xuanshu (default skin) | Ink skin | Neon skin |
+|---|---|---|
+| ![Xuanshu](docs/screenshots/stage-xuanshu.png) | ![Ink](docs/screenshots/stage-ink.png) | ![Neon](docs/screenshots/stage-neon.png) |
+
+| 320px narrow | Help & glossary | First-visit guide |
+|---|---|---|
+| ![Narrow](docs/screenshots/stage-320.png) | ![Help](docs/screenshots/help.png) | ![First visit](docs/screenshots/first-visit.png) |
+
+> Captured from the `scripts/stress_freeplay.py 2000` free-player save (600 telemetry samples); every shot is
+> taken only after asserting brand / skin / chart rendering / timeline. Provenance: [`docs/screenshots/README.md`](docs/screenshots/README.md).
+
+---
+
 ## Quick Start
 
 ### Option A: MCP (recommended — for any AI agent)
@@ -119,6 +137,7 @@ game_engine/                      # the repo root IS the game_engine package (an
 ├── scripts/verify_panel.py       # panel contract self-check (48 assertions: view model / legacy saves / static whitelist / missing-save banner / brand / help / series sampling)
 ├── scripts/user_playtest.py      # user-perspective playtest (41 "would a player complain?" checks: exploits / edges / error readability)
 ├── scripts/stress_freeplay.py    # free-player stress test (default 2000 turns, real MCP stdio channel)
+├── docs/screenshots/             # README preview shots (real renders + assertions; provenance in that folder's README)
 ├── demo_state.json               # Demo game state
 ├── GAME_MASTER_PROTOCOL.md       # AI Agent call protocol
 └── rules/                        # 85+ academic formulas as Python

@@ -12,6 +12,7 @@ include pyproject.toml
 recursive-include assets *.js
 recursive-include settings *.json *.md
 recursive-include scripts *.py
+recursive-include docs *.png *.md
 
 include panel.html
 include panel.css

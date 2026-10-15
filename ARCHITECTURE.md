@@ -194,6 +194,7 @@ view_model = {
 - [x] T9 世界观皮肤 v2（ui 配置 + 四套皮肤 + 图表配色联动）— 验证：改 state.ui 免重启即换肤
 - [x] T10 品牌与帮助打磨（品牌可配置 + BRAND.md + 帮助弹窗/术语表/`?` + 首访引导 + 千分位）— 验证：verify_panel 48/48 + 品牌冒烟 20/20
 - [x] T11 上传前置：打包完整性（package-data/MANIFEST.in，v0.8.0）+ 安装包真机验证 + 版本/文档对齐 + 残留清理 — 验证：wheel 内资源齐全 + 从安装包启动面板 5 端点全 200
+- [x] T12 交付物完善：dist 发行包实打（sdist + wheel 落盘）+ 面板截图入仓（docs/screenshots，2000 回合存档现场重截、断言先行）+ 双 README 预览区 + 截图随 sdist/wheel 分发 — 验证：截图断言 35/35 + 产物条目核对 + 安装包冒烟 + 回归全绿
 
 ## 10. 变更日志（Changelog）
 
@@ -204,6 +205,7 @@ view_model = {
 | 2026-10-15 | 长局可视化深化：离线 ECharts（vendored）+ 态势侧写 `/series`（600 封顶）+ 三图表/事件谱/关系网/地点图/修行轨/徽章 + 皮肤 v2（ui 配置/四皮肤/图表配色）+ 长局折叠收敛 | §5、§6.1、§7、新增 §7.1-7.2、§9 T7-T9 | T7-T9 / ADR-004 | verify_panel 42/42 + 浏览器冒烟 14/14 + 2000 轮 stress 全绿 + 2000 轮真实存档渲染冒烟 |
 | 2026-10-15 | 品牌与帮助打磨：品牌可配置（ui.brand/tagline + DEFAULT_BRAND 单一信源 + BRAND.md）+ meta 暴露数据路径 + 帮助弹窗（术语表/图表读法/键盘/数据隐私/皮肤）+ `?` 快捷键 + 首访引导条 + 大数千分位 | §7.2、§9 T10、新增 BRAND.md | T10 | verify_panel 48/48 + 品牌冒烟 20/20 + viz 冒烟 14/14 + 回归 48/48 & 41/41 |
 | 2026-10-15 | 上传准备（v0.8.0）：wheel 资源完整性修复（panel.*/assets/settings 进包）、MANIFEST.in、服务端版本对齐 0.7.0→0.8.0、文档断言计数与结构清单对齐、残留运行文件清理 | §4、§5、§9 T11 | T11 | wheel 36 条目含全部资源 + pip --target 安装后面板 5 端点 200 + 全量回归绿 |
+| 2026-10-15 | 交付物完善：dist 发行包实打落盘（sdist + wheel）+ 面板截图入仓（docs/screenshots 六张，2000 回合存档现场重截、截图前 35 项断言）+ 双 README 界面预览区 + 截图与来源说明随 sdist/wheel 分发（package-data/MANIFEST 纳入 docs） | §4、§5、§9 T12 | T12 | 见 .aqg/code-construction/screenshots-and-dist.md 验证日志 |
 
 ### ADR-004：长局可视化的三个取舍
 - **状态**：已采纳 ｜ **日期**：2026-10-15

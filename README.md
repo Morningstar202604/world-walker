@@ -10,6 +10,24 @@
 
 ---
 
+## 界面预览
+
+实况主舞台（`open_panel` 打开）——只读、离线可用；世界观皮肤、长局曲线与事件反馈都在这一页里。
+以下均为**真实渲染截图**（2000 回合演示存档，非设计稿）：
+
+| 玄枢界（默认皮肤） | 水墨皮肤 | 霓虹皮肤 |
+|---|---|---|
+| ![玄枢界](docs/screenshots/stage-xuanshu.png) | ![水墨](docs/screenshots/stage-ink.png) | ![霓虹](docs/screenshots/stage-neon.png) |
+
+| 320px 窄屏 | 帮助与术语表 | 首次访问引导 |
+|---|---|---|
+| ![窄屏](docs/screenshots/stage-320.png) | ![帮助](docs/screenshots/help.png) | ![首访引导](docs/screenshots/first-visit.png) |
+
+> 截图取自 `scripts/stress_freeplay.py 2000` 的自由玩家存档（侧写 600 条采样）；每张图截取前都逐项断言过
+> 品牌字标 / 皮肤 / 图表渲染 / 时间线。来源与再生方式见 [`docs/screenshots/README.md`](docs/screenshots/README.md)。
+
+---
+
 ## 快速开始
 
 ### 方式 A：MCP（推荐 —— 给任何 AI Agent 用）
@@ -111,6 +129,7 @@ game_engine/                      # 仓库根即 game_engine 包（导入别名�
 ├── scripts/verify_panel.py       # 面板契约自检（48 项断言：视图模型契约/旧存档兼容/静态白名单/缺档错误态/品牌/帮助/序列采样）
 ├── scripts/user_playtest.py      # 用户视角试玩（41 项"玩家会不会投诉"检查：钻空子/边界/报错可读性）
 ├── scripts/stress_freeplay.py    # 自由玩家压力测试（默认 2000 回合，走真实 MCP stdio 通道）
+├── docs/screenshots/             # README 预览截图（真实渲染 + 断言；来源说明见该目录 README）
 ├── demo_state.json               # 演示状态
 ├── GAME_MASTER_PROTOCOL.md       # AI Agent 调用协议
 └── rules/                        # 85+ 学术公式（Python 实现）
